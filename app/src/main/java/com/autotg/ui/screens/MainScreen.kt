@@ -71,7 +71,13 @@ fun MainScreen(
                 items(tasks) { task ->
                     TaskItem(
                         task = task,
-                        chatName = chats.find { it.id == task.chatId }?.name ?: "Unknown Chat"
+                        chatName = chats.find { it.id == task.chatId }?.name ?: "Unknown Chat",
+                        onToggleEnabled = { enabled ->
+                            viewModel.toggleTaskEnabled(task, enabled)
+                        },
+                        onDelete = {
+                            viewModel.deleteTask(task)
+                        }
                     )
                 }
             }
@@ -92,34 +98,62 @@ fun MainScreen(
 }
 
 @Composable
-fun TaskItem(task: ScheduledTask, chatName: String) {
+fun TaskItem(
+    task: ScheduledTask,
+    chatName: String,
+    onToggleEnabled: (Boolean) -> Unit,
+    onDelete: () -> Unit
+) {
     val dateFormat = SimpleDateFormat("MMM dd, HH:mm", Locale.getDefault())
+    val isEnabled = task.isEnabled && task.status == TaskStatus.PENDING
 
     Card(
         modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = if (task.isEnabled) MaterialTheme.colorScheme.surfaceVariant
+                            else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+        )
     ) {
-        Row(
-            modifier = Modifier
-                .padding(16.dp)
-                .fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = task.content,
-                    style = MaterialTheme.typography.bodyLarge,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = task.content,
+                        style = MaterialTheme.typography.bodyLarge,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        color = if (task.isEnabled) Color.Unspecified else Color.Gray
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = "To: $chatName • ${dateFormat.format(Date(task.scheduledTime))}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (task.isEnabled) MaterialTheme.colorScheme.onSurfaceVariant
+                                else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                    )
+                }
+
+                Switch(
+                    checked = task.isEnabled,
+                    onCheckedChange = onToggleEnabled,
+                    enabled = task.status == TaskStatus.PENDING
                 )
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = "To: $chatName • ${dateFormat.format(Date(task.scheduledTime))}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+
+                Spacer(modifier = Modifier.width(8.dp))
+                StatusIcon(status = task.status)
             }
 
-            StatusIcon(status = task.status)
+            if (task.status == TaskStatus.FAILED && !task.lastError.isNullOrEmpty()) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = "Error: ${task.lastError}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error
+                )
+            }
         }
     }
 }

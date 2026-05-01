@@ -9,7 +9,7 @@ import com.autotg.data.models.Bot
 import com.autotg.data.models.Chat
 import com.autotg.data.models.ScheduledTask
 
-@Database(entities = [Bot::class, Chat::class, ScheduledTask::class], version = 1, exportSchema = false)
+@Database(entities = [Bot::class, Chat::class, ScheduledTask::class], version = 2, exportSchema = false)
 @TypeConverters(Converters::class)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun autoTGDao(): AutoTGDao
@@ -24,7 +24,9 @@ abstract class AppDatabase : RoomDatabase() {
                     context.applicationContext,
                     AppDatabase::class.java,
                     "autotg_database"
-                ).build()
+                )
+                .fallbackToDestructiveMigration()
+                .build()
                 INSTANCE = instance
                 instance
             }

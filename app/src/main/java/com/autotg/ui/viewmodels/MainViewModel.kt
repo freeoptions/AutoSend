@@ -51,4 +51,16 @@ class MainViewModel @Inject constructor(
             WorkManagerHelper.cancelTask(context, task.id)
         }
     }
+
+    fun toggleTaskEnabled(task: ScheduledTask, enabled: Boolean) {
+        viewModelScope.launch {
+            val updatedTask = task.copy(isEnabled = enabled)
+            repository.updateTask(updatedTask)
+            if (enabled) {
+                WorkManagerHelper.scheduleTask(context, updatedTask)
+            } else {
+                WorkManagerHelper.cancelTask(context, updatedTask.id)
+            }
+        }
+    }
 }

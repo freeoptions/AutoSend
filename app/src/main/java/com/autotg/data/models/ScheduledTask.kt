@@ -32,7 +32,8 @@ data class ScheduledTask(
     val scheduledTime: Long,
     val status: TaskStatus = TaskStatus.PENDING,
     val retryCount: Int = 0,
-    val lastError: String? = null
+    val lastError: String? = null,
+    val isEnabled: Boolean = true
 )
 
 enum class TaskStatus {
