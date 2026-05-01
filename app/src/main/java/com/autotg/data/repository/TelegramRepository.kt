@@ -55,4 +55,16 @@ class TelegramRepository @Inject constructor(
     suspend fun getBotById(id: Long) = autoTGDao.getBotById(id)
     suspend fun getChatById(id: Long) = autoTGDao.getChatById(id)
     suspend fun getTaskById(id: Long) = autoTGDao.getTaskById(id)
+
+    // Bot operations
+    fun getAllBots() = autoTGDao.getAllBots()
+    suspend fun insertBot(bot: Bot) = autoTGDao.insertBot(bot)
+    suspend fun updateBot(bot: Bot) = autoTGDao.updateBot(bot)
+    suspend fun deleteBot(bot: Bot) = autoTGDao.deleteBot(bot)
+
+    // Chat operations
+    fun getAllChats() = autoTGDao.getAllChats()
+    suspend fun insertChat(chat: Chat) = autoTGDao.insertChat(chat)
+    suspend fun updateChat(chat: Chat) = autoTGDao.updateChat(chat)
+    suspend fun deleteChat(chat: Chat) = autoTGDao.deleteChat(chat)
 }
