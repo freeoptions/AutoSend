@@ -3,14 +3,19 @@ package com.autotg
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.animation.Crossfade
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
+import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.tooling.preview.Preview
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.autotg.ui.screens.ConfigScreen
+import com.autotg.ui.screens.MainScreen
+import com.autotg.ui.viewmodels.MainViewModel
+import dagger.hilt.android.AndroidEntryPoint
 
+@AndroidEntryPoint
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -20,7 +25,7 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    Greeting("AutoTG")
+                    AutoTGApp()
                 }
             }
         }
@@ -28,17 +33,23 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-fun Greeting(name: String, modifier: Modifier = Modifier) {
-    Text(
-        text = "Hello $name!",
-        modifier = modifier
-    )
+fun AutoTGApp() {
+    var currentScreen by remember { mutableStateOf(Screen.Main) }
+    val mainViewModel: MainViewModel = viewModel()
+
+    Crossfade(targetState = currentScreen, label = "ScreenTransition") { screen ->
+        when (screen) {
+            Screen.Main -> MainScreen(
+                viewModel = mainViewModel,
+                onNavigateToConfig = { currentScreen = Screen.Config }
+            )
+            Screen.Config -> ConfigScreen(
+                onNavigateBack = { currentScreen = Screen.Main }
+            )
+        }
+    }
 }
 
-@Preview(showBackground = true)
-@Composable
-fun GreetingPreview() {
-    MaterialTheme {
-        Greeting("Android")
-    }
+enum class Screen {
+    Main, Config
 }
