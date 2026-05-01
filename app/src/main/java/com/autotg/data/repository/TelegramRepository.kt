@@ -25,12 +25,12 @@ class TelegramRepository @Inject constructor(
             )
 
             if (response.isSuccessful && response.body()?.ok == true) {
-                autoTGDao.updateTask(task.copy(status = TaskStatus.SUCCESS))
+                autoTGDao.updateTask(task.copy(status = TaskStatus.SUCCESS, lastError = null))
                 Result.success(Unit)
             } else {
                 val errorMsg = response.body()?.description ?: response.message() ?: "Unknown error"
+                // Don't update status to FAILED here yet if we want to retry
                 autoTGDao.updateTask(task.copy(
-                    status = TaskStatus.FAILED,
                     lastError = errorMsg,
                     retryCount = task.retryCount + 1
                 ))
@@ -38,7 +38,6 @@ class TelegramRepository @Inject constructor(
             }
         } catch (e: Exception) {
             autoTGDao.updateTask(task.copy(
-                status = TaskStatus.FAILED,
                 lastError = e.message,
                 retryCount = task.retryCount + 1
             ))
@@ -55,4 +54,5 @@ class TelegramRepository @Inject constructor(
 
     suspend fun getBotById(id: Long) = autoTGDao.getBotById(id)
     suspend fun getChatById(id: Long) = autoTGDao.getChatById(id)
+    suspend fun getTaskById(id: Long) = autoTGDao.getTaskById(id)
 }
