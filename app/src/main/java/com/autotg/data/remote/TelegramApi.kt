@@ -8,11 +8,12 @@ import retrofit2.http.Path
 
 interface TelegramApi {
     @FormUrlEncoded
-    @POST("bot{token}/sendMessage")
+    @POST("/bot{token}/sendMessage")
     suspend fun sendMessage(
         @Path("token") botToken: String,
         @Field("chat_id") chatId: String,
-        @Field("text") text: String
+        @Field("text") text: String,
+        @Field("parse_mode") parseMode: String? = null
     ): Response<TelegramResponse>
 }
 

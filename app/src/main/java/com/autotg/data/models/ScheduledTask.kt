@@ -29,15 +29,29 @@ data class ScheduledTask(
     val botId: Long,
     val chatId: Long,
     val content: String,
+    val parseMode: MessageParseMode = MessageParseMode.NONE,
     val scheduledTime: Long,
     val status: TaskStatus = TaskStatus.PENDING,
     val retryCount: Int = 0,
     val lastError: String? = null,
-    val isEnabled: Boolean = true
+    val isEnabled: Boolean = true,
+    val cronExpression: String? = null // null means one-time task
 )
 
 enum class TaskStatus {
     PENDING,
     SUCCESS,
     FAILED
+}
+
+enum class MessageParseMode {
+    NONE,
+    MARKDOWN_V2;
+
+    fun toTelegramValue(): String? {
+        return when (this) {
+            NONE -> null
+            MARKDOWN_V2 -> "MarkdownV2"
+        }
+    }
 }

@@ -1,0 +1,43 @@
+package com.autotg.utils
+
+import com.autotg.data.models.ScheduledTask
+import com.autotg.data.models.TaskStatus
+
+object TaskExecutionPolicy {
+    const val EARLY_TRIGGER_TOLERANCE_MS = 30_000L
+
+    fun decide(
+        task: ScheduledTask,
+        now: Long = System.currentTimeMillis()
+    ): TaskExecutionDecision {
+        if (!task.isEnabled) {
+            return TaskExecutionDecision.SkipDisabled
+        }
+
+        if (task.status == TaskStatus.SUCCESS) {
+            return if (task.cronExpression.isNullOrBlank()) {
+                TaskExecutionDecision.SkipAlreadyCompleted
+            } else {
+                TaskExecutionDecision.AdvanceCompletedRecurring
+            }
+        }
+
+        if (task.cronExpression.isNullOrBlank() && task.status != TaskStatus.PENDING) {
+            return TaskExecutionDecision.SkipAlreadyCompleted
+        }
+
+        if (task.scheduledTime > now + EARLY_TRIGGER_TOLERANCE_MS) {
+            return TaskExecutionDecision.RescheduleFuture
+        }
+
+        return TaskExecutionDecision.ExecuteNow
+    }
+}
+
+enum class TaskExecutionDecision {
+    ExecuteNow,
+    AdvanceCompletedRecurring,
+    RescheduleFuture,
+    SkipAlreadyCompleted,
+    SkipDisabled
+}

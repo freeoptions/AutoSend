@@ -1,8 +1,12 @@
 package com.autotg
 
+import android.Manifest
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.Crossfade
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
@@ -11,11 +15,14 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.autotg.ui.screens.ConfigScreen
+import com.autotg.ui.screens.LogScreen
 import com.autotg.ui.screens.MainScreen
 import com.autotg.ui.viewmodels.MainViewModel
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.activity.compose.BackHandler
+import com.autotg.service.KeepAliveService
 import com.autotg.utils.PermissionUtils
 import dagger.hilt.android.AndroidEntryPoint
 
@@ -23,6 +30,7 @@ import dagger.hilt.android.AndroidEntryPoint
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        KeepAliveService.startIfEnabled(this)
         setContent {
             MaterialTheme {
                 Surface(
@@ -40,52 +48,96 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun PermissionCheck() {
     val context = androidx.compose.ui.platform.LocalContext.current
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { }
+    var showExactAlarmDialog by remember { mutableStateOf(!PermissionUtils.canScheduleExactAlarms(context)) }
     var showBatteryDialog by remember { mutableStateOf(!PermissionUtils.isBatteryOptimizationIgnored(context)) }
-    var showAutostartDialog by remember { mutableStateOf(PermissionUtils.isXiaomi()) } // Simple check for Xiaomi
+    var showNotificationDialog by remember { mutableStateOf(!PermissionUtils.areNotificationsEnabled(context)) }
+    var showAutostartDialog by remember {
+        mutableStateOf(PermissionUtils.isXiaomi() && !PermissionUtils.isXiaomiAutostartEnabled(context))
+    }
 
-    if (showBatteryDialog) {
+    if (showExactAlarmDialog) {
+        AlertDialog(
+            onDismissRequest = { showExactAlarmDialog = false },
+            title = { Text("精确闹钟权限") },
+            text = { Text("为了让 0 点这类定时任务准点触发，请允许 AutoTG 设置精确闹钟。否则系统可能会延后发送，只能走后台兜底。") },
+            confirmButton = {
+                TextButton(onClick = {
+                    PermissionUtils.openExactAlarmSettings(context)
+                    showExactAlarmDialog = false
+                }) {
+                    Text("去设置")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showExactAlarmDialog = false }) {
+                    Text("稍后")
+                }
+            }
+        )
+    } else if (showBatteryDialog) {
         AlertDialog(
             onDismissRequest = { showBatteryDialog = false },
-            title = { Text("Battery Optimization") },
-            text = { Text("To ensure reliable scheduled messages, please set battery optimization to 'Unrestricted'.") },
+            title = { Text("电池优化设置") },
+            text = { Text("为了确保定时消息能准时发送，请将 AutoTG 的电池优化设置为“无限制”。") },
             confirmButton = {
                 TextButton(onClick = {
                     PermissionUtils.requestIgnoreBatteryOptimizations(context)
                     showBatteryDialog = false
                 }) {
-                    Text("Settings")
+                    Text("去设置")
                 }
             },
             dismissButton = {
                 TextButton(onClick = { showBatteryDialog = false }) {
-                    Text("Later")
+                    Text("稍后")
+                }
+            }
+        )
+    } else if (showNotificationDialog) {
+        AlertDialog(
+            onDismissRequest = { showNotificationDialog = false },
+            title = { Text("守护通知权限") },
+            text = { Text("AutoTG 的前台守护服务需要显示常驻通知。请允许通知，否则 MIUI 更容易限制或终止后台服务。") },
+            confirmButton = {
+                TextButton(onClick = {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                        notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                    } else {
+                        PermissionUtils.openNotificationSettings(context)
+                    }
+                    showNotificationDialog = false
+                }) {
+                    Text("去开启")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showNotificationDialog = false }) {
+                    Text("稍后")
                 }
             }
         )
     } else if (showAutostartDialog) {
-        // Only show if Xiaomi and not ignored yet (using a simple state for now, ideally persist this choice)
-        var dismissedAutostart by remember { mutableStateOf(false) }
-        if (!dismissedAutostart) {
-            AlertDialog(
-                onDismissRequest = { dismissedAutostart = true },
-                title = { Text("Xiaomi Optimization") },
-                text = { Text("On MIUI/HyperOS, please enable 'Autostart' for AutoTG to work in the background.") },
-                confirmButton = {
-                    TextButton(onClick = {
-                        PermissionUtils.openXiaomiAutostartSettings(context)
-                        dismissedAutostart = true
-                        showAutostartDialog = false
-                    }) {
-                        Text("Open Settings")
-                    }
-                },
-                dismissButton = {
-                    TextButton(onClick = { dismissedAutostart = true }) {
-                        Text("Dismiss")
-                    }
+        AlertDialog(
+            onDismissRequest = { showAutostartDialog = false },
+            title = { Text("小米/澎湃系统优化") },
+            text = { Text("在小米手机上，请开启“自启动”权限，以允许 AutoTG 在后台运行。") },
+            confirmButton = {
+                TextButton(onClick = {
+                    PermissionUtils.openXiaomiAutostartSettings(context)
+                    showAutostartDialog = false
+                }) {
+                    Text("去开启")
                 }
-            )
-        }
+            },
+            dismissButton = {
+                TextButton(onClick = { showAutostartDialog = false }) {
+                    Text("关闭")
+                }
+            }
+        )
     }
 }
 
@@ -94,13 +146,23 @@ fun AutoTGApp() {
     var currentScreen by remember { mutableStateOf(Screen.Main) }
     val mainViewModel: MainViewModel = viewModel()
 
+    // Handle system back gesture
+    BackHandler(enabled = currentScreen != Screen.Main) {
+        currentScreen = Screen.Main
+    }
+
     Crossfade(targetState = currentScreen, label = "ScreenTransition") { screen ->
         when (screen) {
             Screen.Main -> MainScreen(
                 viewModel = mainViewModel,
-                onNavigateToConfig = { currentScreen = Screen.Config }
+                onNavigateToConfig = { currentScreen = Screen.Config },
+                onNavigateToLogs = { currentScreen = Screen.Logs }
             )
             Screen.Config -> ConfigScreen(
+                onNavigateBack = { currentScreen = Screen.Main }
+            )
+            Screen.Logs -> LogScreen(
+                viewModel = mainViewModel,
                 onNavigateBack = { currentScreen = Screen.Main }
             )
         }
@@ -108,5 +170,5 @@ fun AutoTGApp() {
 }
 
 enum class Screen {
-    Main, Config
+    Main, Config, Logs
 }
