@@ -3,14 +3,14 @@
     xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- AutoTG 使用适用范围更广、可由用户撤销的精确闹钟特殊权限。
+         USE_EXACT_ALARM 仅适用于符合商店政策的系统闹钟/日历类应用，不能与此权限混用。 -->
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
 
     <application
         android:name=".AutoTGApplication"
@@ -43,28 +43,13 @@
         </activity>
 
         <service
-            android:name=".service.KeepAliveService"
-            android:enabled="true"
-            android:exported="false"
-            android:foregroundServiceType="specialUse">
-            <property
-                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="用户主动启用的定时消息守护服务，用于维持可见状态、重建精确闹钟并恢复漏触发的 Cron 任务" />
-        </service>
-
-        <service
             android:name=".service.TaskExecutionService"
             android:enabled="true"
             android:exported="false"
-            android:foregroundServiceType="dataSync" />
+            android:foregroundServiceType="shortService" />
 
         <receiver
             android:name=".worker.TaskReceiver"
-            android:exported="false" />
-
-        <receiver
-            android:name=".worker.ServiceRestartReceiver"
-            android:enabled="true"
             android:exported="false" />
 
         <receiver

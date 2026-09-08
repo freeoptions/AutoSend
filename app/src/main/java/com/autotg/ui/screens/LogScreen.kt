@@ -59,7 +59,7 @@ private const val STATUS_SUCCESS = "\u53d1\u9001\u6210\u529f"
 private const val STATUS_FAILED = "\u53d1\u9001\u5931\u8d25"
 private const val STATUS_MISSED = "\u9519\u8fc7\u6267\u884c"
 private const val STATUS_SYSTEM = "\u7cfb\u7edf\u8bca\u65ad"
-private const val LABEL_BOT_CHAT = "\u673a\u5668\u4eba: %s  \u7fa4\u7ec4: %s"
+private const val LABEL_BOT_CHAT = "通道: %s  目标: %s"
 private const val ACTION_RETRY = "\u70b9\u51fb\u91cd\u8bd5"
 private const val LABEL_DETAILS = "\u8be6\u60c5: %s"
 

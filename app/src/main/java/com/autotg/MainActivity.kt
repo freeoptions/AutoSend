@@ -22,7 +22,6 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.activity.compose.BackHandler
-import com.autotg.service.KeepAliveService
 import com.autotg.utils.PermissionUtils
 import dagger.hilt.android.AndroidEntryPoint
 
@@ -30,14 +29,13 @@ import dagger.hilt.android.AndroidEntryPoint
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        KeepAliveService.startIfEnabled(this)
         setContent {
             MaterialTheme {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    AutoTGApp()
+                    AutoSendApp()
                     PermissionCheck()
                 }
             }
@@ -62,7 +60,7 @@ fun PermissionCheck() {
         AlertDialog(
             onDismissRequest = { showExactAlarmDialog = false },
             title = { Text("精确闹钟权限") },
-            text = { Text("为了让 0 点这类定时任务准点触发，请允许 AutoTG 设置精确闹钟。否则系统可能会延后发送，只能走后台兜底。") },
+            text = { Text("为了让 0 点这类定时任务准点触发，请允许 AutoSend 设置精确闹钟。否则系统可能会延后发送，只能走后台兜底。") },
             confirmButton = {
                 TextButton(onClick = {
                     PermissionUtils.openExactAlarmSettings(context)
@@ -81,7 +79,7 @@ fun PermissionCheck() {
         AlertDialog(
             onDismissRequest = { showBatteryDialog = false },
             title = { Text("电池优化设置") },
-            text = { Text("为了确保定时消息能准时发送，请将 AutoTG 的电池优化设置为“无限制”。") },
+            text = { Text("为了确保定时消息能准时发送，请将 AutoSend 的电池优化设置为“无限制”。") },
             confirmButton = {
                 TextButton(onClick = {
                     PermissionUtils.requestIgnoreBatteryOptimizations(context)
@@ -99,8 +97,8 @@ fun PermissionCheck() {
     } else if (showNotificationDialog) {
         AlertDialog(
             onDismissRequest = { showNotificationDialog = false },
-            title = { Text("守护通知权限") },
-            text = { Text("AutoTG 的前台守护服务需要显示常驻通知。请允许通知，否则 MIUI 更容易限制或终止后台服务。") },
+            title = { Text("任务执行通知权限") },
+            text = { Text("AutoSend 到点发送时会短暂显示任务执行通知，并在完成后立即移除。建议允许通知，便于确认短时服务正在工作。") },
             confirmButton = {
                 TextButton(onClick = {
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -123,7 +121,7 @@ fun PermissionCheck() {
         AlertDialog(
             onDismissRequest = { showAutostartDialog = false },
             title = { Text("小米/澎湃系统优化") },
-            text = { Text("在小米手机上，请开启“自启动”权限，以允许 AutoTG 在后台运行。") },
+            text = { Text("在小米手机上，请开启“自启动”权限，以允许 AutoSend 在后台运行。") },
             confirmButton = {
                 TextButton(onClick = {
                     PermissionUtils.openXiaomiAutostartSettings(context)
@@ -142,7 +140,7 @@ fun PermissionCheck() {
 }
 
 @Composable
-fun AutoTGApp() {
+fun AutoSendApp() {
     var currentScreen by remember { mutableStateOf(Screen.Main) }
     val mainViewModel: MainViewModel = viewModel()
 

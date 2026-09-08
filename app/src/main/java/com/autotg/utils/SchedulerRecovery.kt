@@ -2,6 +2,7 @@ package com.autotg.utils
 
 import android.content.Context
 import com.autotg.data.models.LogStatus
+import com.autotg.data.models.DeliveryChannel
 import com.autotg.data.models.ScheduledTask
 import com.autotg.data.models.TaskLog
 import com.autotg.data.models.TaskStatus
@@ -32,7 +33,7 @@ object SchedulerRecovery {
 
         repository.getAllTasks()
             .first()
-            .filter { it.isEnabled }
+            .filter { it.isEnabled && it.deliveryChannel == DeliveryChannel.FEISHU }
             .forEach { task ->
                 recoverTask(context, repository, task, lastCheckTime, now)
             }
@@ -47,11 +48,11 @@ object SchedulerRecovery {
         lastCheckTime: Long,
         now: Long
     ) {
-        val cron = task.cronExpression
+        val isRecurring = RecurringScheduleUtils.isRecurring(task)
         val scheduledTime = task.scheduledTime
 
         if (scheduledTime <= 0L) {
-            recoverInvalidTimeTask(context, repository, task, cron)
+            recoverInvalidTimeTask(context, repository, task)
             return
         }
 
@@ -62,7 +63,7 @@ object SchedulerRecovery {
 
         val shouldRecover = scheduledTime in (lastCheckTime + 1)..now
         if (!shouldRecover) {
-            if (!cron.isNullOrBlank()) {
+            if (isRecurring) {
                 recoverRecurringTaskAfterLongGap(context, repository, task, now)
             } else if (task.status == TaskStatus.PENDING) {
                 val message = "$MISSED_PREFIX\uff1a${formatTime(scheduledTime)} \u5230\u671f\uff0c\u56e0\u9519\u8fc7\u68c0\u67e5\u65f6\u673a\uff0c\u5df2\u5728\u672c\u6b21\u5524\u9192\u540e\u8865\u53d1\u3002"
@@ -73,7 +74,7 @@ object SchedulerRecovery {
             return
         }
 
-        if (cron.isNullOrBlank()) {
+        if (!isRecurring) {
             if (task.status == TaskStatus.PENDING) {
                 val message = "$MISSED_PREFIX\uff1a${formatTime(scheduledTime)} \u5230\u671f\uff0c\u5df2\u5728\u672c\u6b21\u68c0\u67e5\u7a97\u53e3\u5185\u8865\u53d1\u3002"
                 insertMissedLog(repository, task, message)
@@ -102,10 +103,7 @@ object SchedulerRecovery {
         task: ScheduledTask,
         now: Long
     ) {
-        val cron = task.cronExpression ?: return
-        val nextTime = CronUtils.getNextExecutionTimes(cron, 1)
-            .firstOrNull { it > now }
-            ?: CronUtils.getNextExecutionTimeFrom(cron, now + 1000)
+        val nextTime = RecurringScheduleUtils.getNextExecutionTimeFrom(task, now + 1_000L)
 
         if (nextTime != null) {
             val message = "\u5df2\u8d85\u8fc7\u8865\u53d1\u7a97\u53e3\uff0c\u8df3\u8fc7\u8fc7\u671f\u89e6\u53d1\uff0c\u76f4\u63a5\u8ba1\u7b97\u4e0b\u4e00\u6b21\u65f6\u95f4\u3002"
@@ -126,11 +124,13 @@ object SchedulerRecovery {
     private suspend fun recoverInvalidTimeTask(
         context: Context,
         repository: TelegramRepository,
-        task: ScheduledTask,
-        cron: String?
+        task: ScheduledTask
     ) {
-        if (!cron.isNullOrBlank()) {
-            val nextTime = CronUtils.getNextExecutionTimeFrom(cron, System.currentTimeMillis() + 1000)
+        if (RecurringScheduleUtils.isRecurring(task)) {
+            val nextTime = RecurringScheduleUtils.getNextExecutionTimeFrom(
+                task,
+                System.currentTimeMillis() + 1_000L
+            )
             if (nextTime != null) {
                 val nextTask = task.copy(
                     scheduledTime = nextTime,
@@ -156,14 +156,13 @@ object SchedulerRecovery {
         task: ScheduledTask,
         message: String
     ) {
-        val bot = repository.getBotById(task.botId)
-        val chat = repository.getChatById(task.chatId)
+        val target = repository.describeTaskTarget(task)
         repository.insertLog(
             TaskLog(
                 taskId = task.id,
                 taskContent = task.content,
-                botName = bot?.name ?: "\u672a\u77e5\u673a\u5668\u4eba",
-                chatName = chat?.name ?: "\u672a\u77e5\u7fa4\u7ec4",
+                botName = target.channelName,
+                chatName = target.targetName,
                 status = LogStatus.MISSED,
                 errorMessage = message
             )

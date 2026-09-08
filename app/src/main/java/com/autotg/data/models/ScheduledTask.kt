@@ -19,15 +19,23 @@ import androidx.room.PrimaryKey
             parentColumns = ["id"],
             childColumns = ["chatId"],
             onDelete = ForeignKey.CASCADE
+        ),
+        ForeignKey(
+            entity = FeishuWebhook::class,
+            parentColumns = ["id"],
+            childColumns = ["feishuWebhookId"],
+            onDelete = ForeignKey.CASCADE
         )
     ],
-    indices = [Index("botId"), Index("chatId")]
+    indices = [Index("botId"), Index("chatId"), Index("feishuWebhookId")]
 )
 data class ScheduledTask(
     @PrimaryKey(autoGenerate = true)
     val id: Long = 0,
-    val botId: Long,
-    val chatId: Long,
+    val deliveryChannel: DeliveryChannel = DeliveryChannel.TELEGRAM,
+    val botId: Long? = null,
+    val chatId: Long? = null,
+    val feishuWebhookId: Long? = null,
     val content: String,
     val parseMode: MessageParseMode = MessageParseMode.NONE,
     val scheduledTime: Long,
@@ -35,8 +43,14 @@ data class ScheduledTask(
     val retryCount: Int = 0,
     val lastError: String? = null,
     val isEnabled: Boolean = true,
-    val cronExpression: String? = null // null means one-time task
-)
+    val cronExpression: String? = null,
+    val lunarMonth: Int? = null,
+    val lunarDay: Int? = null,
+    val lunarLeapMonth: Boolean = false
+) {
+    val isLunarRecurring: Boolean
+        get() = lunarMonth != null && lunarDay != null
+}
 
 enum class TaskStatus {
     PENDING,
@@ -46,12 +60,5 @@ enum class TaskStatus {
 
 enum class MessageParseMode {
     NONE,
-    MARKDOWN_V2;
-
-    fun toTelegramValue(): String? {
-        return when (this) {
-            NONE -> null
-            MARKDOWN_V2 -> "MarkdownV2"
-        }
-    }
+    MARKDOWN_V2
 }

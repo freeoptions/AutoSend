@@ -1,8 +1,8 @@
 package com.autotg.ui.components
 
-import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -26,12 +26,11 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -45,89 +44,154 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
-import com.autotg.data.models.Bot
-import com.autotg.data.models.Chat
-import com.autotg.data.models.MessageParseMode
+import com.autotg.data.models.FeishuWebhook
 import com.autotg.data.models.ScheduledTask
 import com.autotg.utils.CronUtils
+import com.autotg.utils.LunarCalendarUtils
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-private const val TITLE_CREATE = "\u521b\u5efa\u5b9a\u65f6\u4efb\u52a1"
-private const val TITLE_EDIT = "\u7f16\u8f91\u5b9a\u65f6\u4efb\u52a1"
-private const val LABEL_BOT = "\u673a\u5668\u4eba"
-private const val LABEL_CHAT = "\u7fa4\u7ec4"
-private const val VALUE_UNSELECTED = "\u672a\u9009\u62e9"
-private const val MODE_ONCE = "\u5355\u6b21\u5b9a\u65f6"
-private const val MODE_CRON = "Cron \u8868\u8fbe\u5f0f"
-private const val LABEL_CRON_CONFIG = "Cron \u914d\u7f6e"
-private const val LABEL_CRON_RAW = "Cron \u539f\u59cb\u8868\u8fbe\u5f0f"
-private const val LABEL_CRON_PREVIEW = "\u89e6\u53d1\u65f6\u95f4\u9884\u89c8"
-private const val LABEL_CRON_HINT = "支持 L：放在“日”位时表示当月最后一天，例如 0 0 20 L * *。"
-private const val LABEL_MESSAGE_TIME = "\u53d1\u9001\u65f6\u95f4 (yyyy-MM-dd HH:mm)"
-private const val LABEL_MESSAGE_CONTENT = "\u6d88\u606f\u5185\u5bb9"
-private const val LABEL_PARSE_MODE = "\u53d1\u9001\u683c\u5f0f"
-private const val MODE_PLAIN = "\u666e\u901a\u6587\u672c"
-private const val MODE_MARKDOWN_V2 = "MarkdownV2"
-private const val MARKDOWN_HINT = "\u542f\u7528\u540e\u4f1a\u6309 Telegram MarkdownV2 \u53d1\u9001\uff0c\u7279\u6b8a\u5b57\u7b26\u8bf7\u6309 Telegram \u89c4\u5219\u8f6c\u4e49\u3002"
-private const val ACTION_CANCEL = "\u53d6\u6d88"
-private const val ACTION_CREATE = "\u7acb\u5373\u521b\u5efa"
-private const val ACTION_SAVE = "\u4fdd\u5b58\u4fee\u6539"
+private const val TITLE_CREATE = "创建定时任务"
+private const val TITLE_EDIT = "编辑定时任务"
+private const val LABEL_FEISHU_TARGET = "发送到"
+private const val VALUE_UNSELECTED = "未选择"
+private const val MODE_ONCE = "单次定时"
+private const val MODE_CRON = "重复任务"
+private const val MODE_LUNAR = "阴历生日"
+private const val LABEL_CRON_CONFIG = "重复规则"
+private const val LABEL_CRON_RAW = "Cron 表达式"
+private const val LABEL_CRON_PREVIEW = "触发时间预览"
+private const val LABEL_CRON_HINT = "支持 L：放在“日”位表示当月最后一天，例如 0 0 20 L * *"
+private const val LABEL_MESSAGE_TIME = "发送时间（yyyy-MM-dd HH:mm）"
+private const val LABEL_MESSAGE_CONTENT = "消息内容"
+private const val LABEL_LUNAR_MONTH = "月份（1-12）"
+private const val LABEL_LUNAR_DAY = "日期（1-30）"
+private const val LABEL_LUNAR_TIME = "发送时间（yyyy-MM-dd HH:mm）"
+private const val LABEL_LUNAR_LEAP = "闰月"
+private const val LABEL_LUNAR_LEAP_HINT = "开启后仅在闰月触发，普通生日请保持关闭"
+private const val LABEL_LUNAR_HINT = "按中国农历每年触发；如果该年没有对应的闰月日期，将顺延到下一次可用日期。"
+private const val ACTION_CANCEL = "取消"
+private const val ACTION_CREATE = "立即创建"
+private const val ACTION_SAVE = "保存修改"
+
+private enum class ScheduleMode {
+    ONCE,
+    CRON,
+    LUNAR
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TaskCreationDialog(
-    bots: List<Bot>,
-    chats: List<Chat>,
+    feishuWebhooks: List<FeishuWebhook>,
     editingTask: ScheduledTask? = null,
-    initialBotId: Long? = null,
+    initialFeishuWebhookId: Long? = null,
     onDismiss: () -> Unit,
     onConfirm: (
-        botId: Long,
-        chatId: Long,
+        feishuWebhookId: Long,
         content: String,
-        parseMode: MessageParseMode,
         time: Long,
-        cron: String?
+        cron: String?,
+        lunarMonth: Int?,
+        lunarDay: Int?,
+        lunarLeapMonth: Boolean
     ) -> Unit
 ) {
-    var selectedBot by remember {
+    var selectedWebhook by remember(editingTask, initialFeishuWebhookId, feishuWebhooks) {
         mutableStateOf(
-            bots.find { it.id == (editingTask?.botId ?: initialBotId) } ?: bots.firstOrNull()
+            feishuWebhooks.find {
+                it.id == (editingTask?.feishuWebhookId ?: initialFeishuWebhookId)
+            } ?: feishuWebhooks.firstOrNull()
         )
     }
-    var selectedChat by remember {
-        mutableStateOf(chats.find { it.id == editingTask?.chatId } ?: chats.firstOrNull())
+    var content by remember(editingTask) { mutableStateOf(editingTask?.content.orEmpty()) }
+    var scheduleMode by remember(editingTask) {
+        mutableStateOf(
+            when {
+                editingTask?.isLunarRecurring == true -> ScheduleMode.LUNAR
+                editingTask?.cronExpression?.isNotBlank() == true -> ScheduleMode.CRON
+                else -> ScheduleMode.ONCE
+            }
+        )
     }
-    var content by remember { mutableStateOf(editingTask?.content ?: "") }
-    var parseMode by remember { mutableStateOf(editingTask?.parseMode ?: MessageParseMode.NONE) }
-
-    var isCronMode by remember { mutableStateOf(editingTask?.cronExpression != null) }
-    var cronParts by remember {
-        val initial = editingTask?.cronExpression?.split(" ")?.toMutableList()
-            ?: mutableListOf("0", "0", "*", "*", "*", "*")
-        mutableStateOf(initial)
+    var cronParts by remember(editingTask) {
+        mutableStateOf(
+            editingTask?.cronExpression?.split(" ")?.toMutableList()
+                ?: mutableListOf("0", "0", "*", "*", "*", "*")
+        )
     }
-    var selectedPartIndex by remember { mutableIntStateOf(1) }
-
-    var timeString by remember {
-        val initialTime = if (editingTask != null) {
-            Date(editingTask.scheduledTime)
-        } else {
-            Date(System.currentTimeMillis() + 600000)
-        }
+    var selectedPartIndex by remember(editingTask) { mutableIntStateOf(1) }
+    val initialTime = editingTask?.let { Date(it.scheduledTime) }
+        ?: Date(System.currentTimeMillis() + 600000)
+    val defaultLunarDate = remember(editingTask) {
+        editingTask?.let { task ->
+            task.lunarMonth?.let { month ->
+                task.lunarDay?.let { day ->
+                    com.autotg.utils.LunarDate(month, day, task.lunarLeapMonth)
+                }
+            }
+        } ?: LunarCalendarUtils.getLunarDate(initialTime.time)
+    }
+    var lunarMonthString by remember(editingTask) {
+        mutableStateOf(editingTask?.lunarMonth?.toString() ?: defaultLunarDate.month.toString())
+    }
+    var lunarDayString by remember(editingTask) {
+        mutableStateOf(editingTask?.lunarDay?.toString() ?: defaultLunarDate.day.toString())
+    }
+    var lunarLeapMonth by remember(editingTask) {
+        mutableStateOf(editingTask?.lunarLeapMonth ?: false)
+    }
+    var timeString by remember(editingTask) {
         mutableStateOf(SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(initialTime))
     }
 
     val cronExpression = cronParts.joinToString(" ")
-    val nextExecutionTimes = remember(cronExpression, isCronMode, timeString) {
+    val parsedTime = remember(timeString) { parseScheduleTime(timeString) }
+    val isCronMode = scheduleMode == ScheduleMode.CRON
+    val nextExecutionTimes = remember(cronExpression, scheduleMode) {
         if (isCronMode) CronUtils.getNextExecutionTimes(cronExpression) else emptyList()
+    }
+    val lunarMonth = lunarMonthString.toIntOrNull()
+    val lunarDay = lunarDayString.toIntOrNull()
+    val lunarNextExecutionTimes = remember(
+        lunarMonthString,
+        lunarDayString,
+        lunarLeapMonth,
+        timeString,
+        scheduleMode
+    ) {
+        if (scheduleMode == ScheduleMode.LUNAR && lunarMonth != null && lunarDay != null && parsedTime != null) {
+            val calendar = java.util.Calendar.getInstance().apply { timeInMillis = parsedTime.time }
+            LunarCalendarUtils.getNextExecutionTimes(
+                month = lunarMonth,
+                day = lunarDay,
+                hour = calendar.get(java.util.Calendar.HOUR_OF_DAY),
+                minute = calendar.get(java.util.Calendar.MINUTE),
+                leapMonth = lunarLeapMonth,
+                count = 5
+            )
+        } else {
+            emptyList()
+        }
+    }
+    val lunarValidationMessage = when {
+        scheduleMode != ScheduleMode.LUNAR -> null
+        !LunarCalendarUtils.isValidDate(lunarMonth, lunarDay) -> "请输入有效的阴历月份（1-12）和日期（1-30）"
+        parsedTime == null -> "请输入正确的时间格式"
+        lunarNextExecutionTimes.isEmpty() -> "未来几年内找不到对应日期，请检查月份、日期或闰月设置"
+        else -> null
+    }
+    val canConfirm = selectedWebhook != null && content.isNotBlank() && when (scheduleMode) {
+        ScheduleMode.ONCE -> parsedTime != null
+        ScheduleMode.CRON -> nextExecutionTimes.isNotEmpty()
+        ScheduleMode.LUNAR -> lunarValidationMessage == null
     }
 
     Dialog(
@@ -138,117 +202,110 @@ fun TaskCreationDialog(
             modifier = Modifier
                 .fillMaxWidth(0.95f)
                 .fillMaxHeight(0.9f),
-            shape = MaterialTheme.shapes.extraLarge,
-            color = MaterialTheme.colorScheme.surface,
+            shape = androidx.compose.material3.MaterialTheme.shapes.extraLarge,
+            color = androidx.compose.material3.MaterialTheme.colorScheme.surface,
             tonalElevation = 6.dp
         ) {
-            Column(modifier = Modifier.padding(16.dp)) {
+            Column(Modifier.padding(16.dp)) {
                 Text(
                     text = if (editingTask == null) TITLE_CREATE else TITLE_EDIT,
-                    style = MaterialTheme.typography.headlineSmall,
+                    style = androidx.compose.material3.MaterialTheme.typography.headlineSmall,
                     fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.primary
+                    color = androidx.compose.material3.MaterialTheme.colorScheme.primary
                 )
-
-                Spacer(modifier = Modifier.height(16.dp))
+                Spacer(Modifier.height(16.dp))
 
                 Column(
                     modifier = Modifier
                         .weight(1f)
                         .verticalScroll(rememberScrollState())
                 ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        var showBotMenu by remember { mutableStateOf(false) }
-                        var showChatMenu by remember { mutableStateOf(false) }
-
-                        Box(modifier = Modifier.weight(1f)) {
-                            InfoCard(
-                                label = LABEL_BOT,
-                                value = selectedBot?.name ?: VALUE_UNSELECTED,
-                                modifier = Modifier.fillMaxWidth(),
-                                onClick = { showBotMenu = true }
-                            )
-                            DropdownMenu(expanded = showBotMenu, onDismissRequest = { showBotMenu = false }) {
-                                bots.forEach { bot ->
-                                    DropdownMenuItem(
-                                        text = { Text(bot.name) },
-                                        onClick = {
-                                            selectedBot = bot
-                                            showBotMenu = false
-                                        }
-                                    )
-                                }
-                            }
-                        }
-
-                        Box(modifier = Modifier.weight(1f)) {
-                            InfoCard(
-                                label = LABEL_CHAT,
-                                value = selectedChat?.name ?: VALUE_UNSELECTED,
-                                modifier = Modifier.fillMaxWidth(),
-                                onClick = { showChatMenu = true }
-                            )
-                            DropdownMenu(expanded = showChatMenu, onDismissRequest = { showChatMenu = false }) {
-                                chats.forEach { chat ->
-                                    DropdownMenuItem(
-                                        text = { Text(chat.name) },
-                                        onClick = {
-                                            selectedChat = chat
-                                            showChatMenu = false
-                                        }
-                                    )
-                                }
+                    Text(
+                        LABEL_FEISHU_TARGET,
+                        style = androidx.compose.material3.MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    var showWebhookMenu by remember { mutableStateOf(false) }
+                    Box(Modifier.fillMaxWidth()) {
+                        TargetCard(
+                            label = "飞书 Webhook",
+                            value = selectedWebhook?.name ?: VALUE_UNSELECTED,
+                            modifier = Modifier.fillMaxWidth(),
+                            onClick = { showWebhookMenu = true }
+                        )
+                        DropdownMenu(
+                            expanded = showWebhookMenu,
+                            onDismissRequest = { showWebhookMenu = false }
+                        ) {
+                            feishuWebhooks.forEach { webhook ->
+                                DropdownMenuItem(
+                                    text = { Text(webhook.name) },
+                                    onClick = {
+                                        selectedWebhook = webhook
+                                        showWebhookMenu = false
+                                    }
+                                )
                             }
                         }
                     }
+                    if (feishuWebhooks.isEmpty()) {
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            "请先在配置管理的“飞书”页添加 Webhook",
+                            style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
+                            color = androidx.compose.material3.MaterialTheme.colorScheme.error
+                        )
+                    }
 
-                    Spacer(modifier = Modifier.height(16.dp))
-
+                    Spacer(Modifier.height(16.dp))
                     Surface(
                         tonalElevation = 2.dp,
-                        shape = MaterialTheme.shapes.medium,
+                        shape = androidx.compose.material3.MaterialTheme.shapes.medium,
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier.padding(4.dp)
                         ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .clickable { isCronMode = false }
-                                    .padding(8.dp)
-                            ) {
-                                RadioButton(selected = !isCronMode, onClick = { isCronMode = false })
-                                Text(MODE_ONCE, style = MaterialTheme.typography.bodyMedium)
-                            }
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .clickable { isCronMode = true }
-                                    .padding(8.dp)
-                            ) {
-                                RadioButton(selected = isCronMode, onClick = { isCronMode = true })
-                                Text(MODE_CRON, style = MaterialTheme.typography.bodyMedium)
+                            listOf(
+                                ScheduleMode.ONCE to MODE_ONCE,
+                                ScheduleMode.CRON to MODE_CRON,
+                                ScheduleMode.LUNAR to MODE_LUNAR
+                            ).forEach { (mode, label) ->
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .clickable { scheduleMode = mode }
+                                        .padding(vertical = 8.dp, horizontal = 2.dp)
+                                ) {
+                                    RadioButton(
+                                        selected = scheduleMode == mode,
+                                        onClick = { scheduleMode = mode }
+                                    )
+                                    Text(label, fontSize = 12.sp, maxLines = 1)
+                                }
                             }
                         }
                     }
 
                     if (isCronMode) {
-                        Spacer(modifier = Modifier.height(16.dp))
-                        Text(LABEL_CRON_CONFIG, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
-                        Spacer(modifier = Modifier.height(8.dp))
-
-                        val labels = listOf("\u79d2", "\u5206", "\u65f6", "\u65e5", "\u6708", "\u5468")
+                        Spacer(Modifier.height(16.dp))
+                        Text(
+                            LABEL_CRON_CONFIG,
+                            style = androidx.compose.material3.MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        val labels = listOf("秒", "分", "时", "日", "月", "周")
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .background(MaterialTheme.colorScheme.surfaceVariant, MaterialTheme.shapes.small)
+                                .background(
+                                    androidx.compose.material3.MaterialTheme.colorScheme.surfaceVariant,
+                                    androidx.compose.material3.MaterialTheme.shapes.small
+                                )
                                 .padding(4.dp),
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
@@ -257,41 +314,45 @@ fun TaskCreationDialog(
                                     horizontalAlignment = Alignment.CenterHorizontally,
                                     modifier = Modifier
                                         .weight(1f)
-                                        .clip(MaterialTheme.shapes.small)
+                                        .clip(androidx.compose.material3.MaterialTheme.shapes.small)
                                         .clickable { selectedPartIndex = index }
                                         .background(
-                                            if (selectedPartIndex == index) MaterialTheme.colorScheme.primary else Color.Transparent
+                                            if (selectedPartIndex == index) {
+                                                androidx.compose.material3.MaterialTheme.colorScheme.primary
+                                            } else {
+                                                Color.Transparent
+                                            }
                                         )
                                         .padding(vertical = 8.dp)
                                 ) {
                                     Text(
-                                        text = cronParts[index],
+                                        cronParts[index],
                                         fontWeight = FontWeight.Bold,
                                         color = if (selectedPartIndex == index) {
-                                            MaterialTheme.colorScheme.onPrimary
+                                            androidx.compose.material3.MaterialTheme.colorScheme.onPrimary
                                         } else {
-                                            MaterialTheme.colorScheme.onSurfaceVariant
+                                            androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant
                                         }
                                     )
                                     Text(
-                                        text = label,
+                                        label,
                                         fontSize = 10.sp,
                                         color = if (selectedPartIndex == index) {
-                                            MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.8f)
+                                            androidx.compose.material3.MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.8f)
                                         } else {
-                                            MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                                            androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
                                         }
                                     )
                                 }
                             }
                         }
 
-                        Spacer(modifier = Modifier.height(12.dp))
+                        Spacer(Modifier.height(12.dp))
                         Text(
-                            text = "\u5feb\u6377\u8bbe\u5b9a (${labels[selectedPartIndex]})",
-                            style = MaterialTheme.typography.labelMedium
+                            "快捷设置（${labels[selectedPartIndex]}）",
+                            style = androidx.compose.material3.MaterialTheme.typography.labelMedium
                         )
-                        FlowRow(modifier = Modifier.fillMaxWidth()) {
+                        FlowRow(Modifier.fillMaxWidth()) {
                             val options = when (selectedPartIndex) {
                                 0, 1 -> listOf("*", "0", "*/5", "*/10", "*/30")
                                 2 -> listOf("*", "0", "9", "12", "18", "22")
@@ -301,9 +362,9 @@ fun TaskCreationDialog(
                             options.forEach { option ->
                                 AssistChip(
                                     onClick = {
-                                        val newParts = cronParts.toMutableList()
-                                        newParts[selectedPartIndex] = option
-                                        cronParts = newParts
+                                        cronParts = cronParts.toMutableList().also {
+                                            it[selectedPartIndex] = option
+                                        }
                                     },
                                     label = { Text(option) },
                                     modifier = Modifier.padding(end = 4.dp)
@@ -311,63 +372,64 @@ fun TaskCreationDialog(
                             }
                         }
 
-                        Spacer(modifier = Modifier.height(12.dp))
-                        Text("\u5e38\u7528\u9884\u8bbe", style = MaterialTheme.typography.labelMedium)
-                        FlowRow(modifier = Modifier.fillMaxWidth()) {
-                            val presets = listOf(
-                                "\u6bcf 5 \u5206\u949f" to "0 */5 * * * *",
-                                "\u6bcf 10 \u5206\u949f" to "0 */10 * * * *",
-                                "\u6bcf\u5c0f\u65f6" to "0 0 * * * *",
-                                "\u6bcf\u5929 9 \u70b9" to "0 0 9 * * *",
-                                "\u6bcf\u5929 12 \u70b9" to "0 0 12 * * *",
-                                "\u6bcf\u5929 20 \u70b9" to "0 0 20 * * *",
-                                "\u5de5\u4f5c\u65e5 9 \u70b9" to "0 0 9 * * 1-5",
-                                "\u6bcf\u6708\u6700\u540e\u4e00\u5929 20 \u70b9" to "0 0 20 L * *"
-                            )
-                            presets.forEach { (label, value) ->
-                                FilterChip(
-                                    selected = false,
-                                    onClick = {
-                                        val parts = value.split(" ")
-                                        if (parts.size == 6) cronParts = parts.toMutableList()
-                                    },
+                        Spacer(Modifier.height(12.dp))
+                        Text(
+                            "常用预设",
+                            style = androidx.compose.material3.MaterialTheme.typography.labelMedium
+                        )
+                        FlowRow(Modifier.fillMaxWidth()) {
+                            listOf(
+                                "每 5 分钟" to "0 */5 * * * *",
+                                "每 10 分钟" to "0 */10 * * * *",
+                                "每小时" to "0 0 * * * *",
+                                "每天 9 点" to "0 0 9 * * *",
+                                "每天 12 点" to "0 0 12 * * *",
+                                "每天 20 点" to "0 0 20 * * *",
+                                "工作日 9 点" to "0 0 9 * * 1-5",
+                                "每月最后一天 20 点" to "0 0 20 L * *"
+                            ).forEach { (label, value) ->
+                                AssistChip(
+                                    onClick = { cronParts = value.split(" ").toMutableList() },
                                     label = { Text(label, fontSize = 11.sp) },
                                     modifier = Modifier.padding(end = 4.dp)
                                 )
                             }
                         }
 
-                        Spacer(modifier = Modifier.height(12.dp))
+                        Spacer(Modifier.height(12.dp))
                         OutlinedTextField(
                             value = cronExpression,
-                            onValueChange = {
-                                val parts = it.split(" ")
+                            onValueChange = { value ->
+                                val parts = value.trim().split(Regex("\\s+"))
                                 if (parts.size == 6) cronParts = parts.toMutableList()
                             },
                             label = { Text(LABEL_CRON_RAW) },
                             modifier = Modifier.fillMaxWidth(),
-                            textStyle = MaterialTheme.typography.bodySmall
+                            textStyle = androidx.compose.material3.MaterialTheme.typography.bodySmall
                         )
-                        Spacer(modifier = Modifier.height(8.dp))
+                        Spacer(Modifier.height(8.dp))
                         Text(
-                            text = LABEL_CRON_HINT,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                            LABEL_CRON_HINT,
+                            style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
+                            color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant
                         )
 
-                        Spacer(modifier = Modifier.height(16.dp))
+                        Spacer(Modifier.height(16.dp))
                         Card(
-                            colors = CardDefaults.cardColors(containerColor = Color.Red.copy(alpha = 0.05f)),
+                            colors = CardDefaults.cardColors(
+                                containerColor = androidx.compose.material3.MaterialTheme.colorScheme.primaryContainer.copy(
+                                    alpha = 0.35f
+                                )
+                            ),
                             modifier = Modifier.fillMaxWidth()
                         ) {
-                            Column(modifier = Modifier.padding(12.dp)) {
+                            Column(Modifier.padding(12.dp)) {
                                 Text(
                                     LABEL_CRON_PREVIEW,
                                     fontWeight = FontWeight.Bold,
-                                    color = Color.Red,
-                                    style = MaterialTheme.typography.labelLarge
+                                    color = androidx.compose.material3.MaterialTheme.colorScheme.primary
                                 )
-                                Spacer(modifier = Modifier.height(4.dp))
+                                Spacer(Modifier.height(4.dp))
                                 val displayFormat = SimpleDateFormat("yyyy/MM/dd HH:mm:ss", Locale.getDefault())
                                 nextExecutionTimes.take(5).forEach { time ->
                                     Text(
@@ -378,17 +440,110 @@ fun TaskCreationDialog(
                                 }
                             }
                         }
+                    } else if (scheduleMode == ScheduleMode.LUNAR) {
+                        Spacer(Modifier.height(16.dp))
+                        Text(
+                            "阴历生日设置",
+                            style = androidx.compose.material3.MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            OutlinedTextField(
+                                value = lunarMonthString,
+                                onValueChange = { lunarMonthString = it.filter { char -> char.isDigit() }.take(2) },
+                                label = { Text(LABEL_LUNAR_MONTH) },
+                                modifier = Modifier.weight(1f),
+                                singleLine = true,
+                                isError = lunarMonth == null || lunarMonth !in 1..12,
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+                            )
+                            OutlinedTextField(
+                                value = lunarDayString,
+                                onValueChange = { lunarDayString = it.filter { char -> char.isDigit() }.take(2) },
+                                label = { Text(LABEL_LUNAR_DAY) },
+                                modifier = Modifier.weight(1f),
+                                singleLine = true,
+                                isError = lunarDay == null || lunarDay !in 1..30,
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+                            )
+                        }
+                        Spacer(Modifier.height(8.dp))
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Switch(
+                                checked = lunarLeapMonth,
+                                onCheckedChange = { lunarLeapMonth = it }
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Column {
+                                Text(LABEL_LUNAR_LEAP, fontWeight = FontWeight.Medium)
+                                Text(
+                                    LABEL_LUNAR_LEAP_HINT,
+                                    style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
+                                    color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                        Spacer(Modifier.height(8.dp))
+                        OutlinedTextField(
+                            value = timeString,
+                            onValueChange = { timeString = it },
+                            label = { Text(LABEL_LUNAR_TIME) },
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true,
+                            isError = parsedTime == null
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            LABEL_LUNAR_HINT,
+                            style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
+                            color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        lunarValidationMessage?.let { message ->
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                message,
+                                style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
+                                color = androidx.compose.material3.MaterialTheme.colorScheme.error
+                            )
+                        }
+                        lunarNextExecutionTimes.firstOrNull()?.let { nextTime ->
+                            Spacer(Modifier.height(8.dp))
+                            Card(
+                                colors = CardDefaults.cardColors(
+                                    containerColor = androidx.compose.material3.MaterialTheme.colorScheme.primaryContainer.copy(
+                                        alpha = 0.35f
+                                    )
+                                ),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text(
+                                    "下次触发：${SimpleDateFormat("yyyy/MM/dd HH:mm", Locale.getDefault()).format(Date(nextTime))}",
+                                    modifier = Modifier.padding(12.dp),
+                                    style = androidx.compose.material3.MaterialTheme.typography.bodySmall
+                                )
+                            }
+                        }
                     } else {
-                        Spacer(modifier = Modifier.height(16.dp))
+                        Spacer(Modifier.height(16.dp))
                         OutlinedTextField(
                             value = timeString,
                             onValueChange = { timeString = it },
                             label = { Text(LABEL_MESSAGE_TIME) },
-                            modifier = Modifier.fillMaxWidth()
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true
                         )
                     }
 
-                    Spacer(modifier = Modifier.height(16.dp))
+                    Spacer(Modifier.height(16.dp))
                     OutlinedTextField(
                         value = content,
                         onValueChange = { content = it },
@@ -396,70 +551,35 @@ fun TaskCreationDialog(
                         modifier = Modifier.fillMaxWidth(),
                         minLines = 3
                     )
-
-                    Spacer(modifier = Modifier.height(12.dp))
-                    Text(LABEL_PARSE_MODE, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        FilterChip(
-                            selected = parseMode == MessageParseMode.NONE,
-                            onClick = { parseMode = MessageParseMode.NONE },
-                            label = { Text(MODE_PLAIN) }
-                        )
-                        FilterChip(
-                            selected = parseMode == MessageParseMode.MARKDOWN_V2,
-                            onClick = { parseMode = MessageParseMode.MARKDOWN_V2 },
-                            label = { Text(MODE_MARKDOWN_V2) }
-                        )
-                    }
-                    if (parseMode == MessageParseMode.MARKDOWN_V2) {
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(
-                            text = MARKDOWN_HINT,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
                 }
 
-                Spacer(modifier = Modifier.height(16.dp))
-
+                Spacer(Modifier.height(16.dp))
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.End
                 ) {
                     TextButton(onClick = onDismiss) { Text(ACTION_CANCEL) }
-                    Spacer(modifier = Modifier.width(8.dp))
+                    Spacer(Modifier.width(8.dp))
                     Button(
                         onClick = {
-                            val botId = selectedBot?.id
-                            val chatId = selectedChat?.id
-                            val time = if (isCronMode) {
-                                nextExecutionTimes.firstOrNull() ?: System.currentTimeMillis()
-                            } else {
-                                try {
-                                    SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault())
-                                        .parse(timeString)
-                                        ?.time
-                                } catch (_: Exception) {
-                                    null
-                                }
+                            val time = when (scheduleMode) {
+                                ScheduleMode.CRON -> nextExecutionTimes.firstOrNull()
+                                ScheduleMode.LUNAR -> lunarNextExecutionTimes.firstOrNull()
+                                ScheduleMode.ONCE -> parsedTime?.time
                             }
-
-                            if (botId != null && chatId != null && time != null && content.isNotBlank()) {
+                            if (selectedWebhook != null && time != null && content.isNotBlank() && canConfirm) {
                                 onConfirm(
-                                    botId,
-                                    chatId,
+                                    selectedWebhook!!.id,
                                     content,
-                                    parseMode,
                                     time,
-                                    if (isCronMode) cronExpression else null
+                                    cronExpression.takeIf { scheduleMode == ScheduleMode.CRON },
+                                    lunarMonth.takeIf { scheduleMode == ScheduleMode.LUNAR },
+                                    lunarDay.takeIf { scheduleMode == ScheduleMode.LUNAR },
+                                    lunarLeapMonth && scheduleMode == ScheduleMode.LUNAR
                                 )
                             }
-                        }
+                        },
+                        enabled = canConfirm
                     ) {
                         Text(if (editingTask == null) ACTION_CREATE else ACTION_SAVE)
                     }
@@ -469,38 +589,50 @@ fun TaskCreationDialog(
     }
 }
 
+private fun parseScheduleTime(value: String): Date? {
+    return runCatching {
+        SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).apply {
+            isLenient = false
+        }.parse(value)
+    }.getOrNull()
+}
+
 @Composable
-fun InfoCard(label: String, value: String, modifier: Modifier = Modifier, onClick: (() -> Unit)? = null) {
+private fun TargetCard(
+    label: String,
+    value: String,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
     Card(
-        modifier = modifier.then(
-            if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier
-        ),
+        modifier = modifier.clickable(onClick = onClick),
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.4f)
+            containerColor = androidx.compose.material3.MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.4f)
         )
     ) {
         Row(
-            modifier = Modifier.padding(8.dp),
+            modifier = Modifier.padding(12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+            Column(Modifier.weight(1f)) {
+                Text(
+                    label,
+                    style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
+                    color = androidx.compose.material3.MaterialTheme.colorScheme.primary
+                )
                 Text(
                     value,
-                    style = MaterialTheme.typography.bodySmall,
+                    style = androidx.compose.material3.MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.Bold,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
             }
-            if (onClick != null) {
-                Icon(
-                    Icons.Default.ArrowDropDown,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(20.dp)
-                )
-            }
+            Icon(
+                Icons.Default.ArrowDropDown,
+                contentDescription = "选择目标",
+                tint = androidx.compose.material3.MaterialTheme.colorScheme.primary
+            )
         }
     }
 }

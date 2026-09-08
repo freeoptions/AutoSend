@@ -2,6 +2,7 @@ package com.autotg.data.local
 
 import androidx.room.TypeConverter
 import com.autotg.data.models.LogStatus
+import com.autotg.data.models.DeliveryChannel
 import com.autotg.data.models.MessageParseMode
 import com.autotg.data.models.TaskStatus
 
@@ -35,5 +36,14 @@ class Converters {
     fun toParseMode(parseMode: String): MessageParseMode {
         return runCatching { MessageParseMode.valueOf(parseMode) }
             .getOrDefault(MessageParseMode.NONE)
+    }
+
+    @TypeConverter
+    fun fromDeliveryChannel(channel: DeliveryChannel): String = channel.name
+
+    @TypeConverter
+    fun toDeliveryChannel(channel: String): DeliveryChannel {
+        return runCatching { DeliveryChannel.valueOf(channel) }
+            .getOrDefault(DeliveryChannel.TELEGRAM)
     }
 }

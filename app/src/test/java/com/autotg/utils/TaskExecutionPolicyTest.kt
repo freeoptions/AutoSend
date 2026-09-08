@@ -3,6 +3,7 @@ package com.autotg.utils
 import com.autotg.data.models.ScheduledTask
 import com.autotg.data.models.TaskStatus
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Test
 
 class TaskExecutionPolicyTest {
@@ -36,6 +37,21 @@ class TaskExecutionPolicyTest {
     }
 
     @Test
+    fun completedLunarBirthdayAdvancesScheduleInsteadOfDuplicateSend() {
+        val now = 1_000_000L
+        val task = testTask(
+            scheduledTime = now - 1_000L,
+            status = TaskStatus.SUCCESS,
+            lunarMonth = 1,
+            lunarDay = 1
+        )
+
+        val decision = TaskExecutionPolicy.decide(task, now)
+
+        assertEquals(TaskExecutionDecision.AdvanceCompletedRecurring, decision)
+    }
+
+    @Test
     fun futureTaskIsRescheduledInsteadOfSentEarly() {
         val now = 1_000_000L
         val task = testTask(
@@ -61,10 +77,24 @@ class TaskExecutionPolicyTest {
         assertEquals(TaskExecutionDecision.ExecuteNow, decision)
     }
 
+    @Test
+    fun alarmRequestCodeIsStableAndSeparatedForNormalTaskIds() {
+        assertEquals(
+            TaskAlarmScheduler.requestCodeForTask(42L),
+            TaskAlarmScheduler.requestCodeForTask(42L)
+        )
+        assertNotEquals(
+            TaskAlarmScheduler.requestCodeForTask(42L),
+            TaskAlarmScheduler.requestCodeForTask(43L)
+        )
+    }
+
     private fun testTask(
         scheduledTime: Long,
         status: TaskStatus = TaskStatus.PENDING,
-        cronExpression: String? = null
+        cronExpression: String? = null,
+        lunarMonth: Int? = null,
+        lunarDay: Int? = null
     ): ScheduledTask {
         return ScheduledTask(
             id = 42L,
@@ -73,7 +103,9 @@ class TaskExecutionPolicyTest {
             content = "测试消息",
             scheduledTime = scheduledTime,
             status = status,
-            cronExpression = cronExpression
+            cronExpression = cronExpression,
+            lunarMonth = lunarMonth,
+            lunarDay = lunarDay
         )
     }
 }

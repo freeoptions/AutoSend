@@ -5,7 +5,7 @@ import com.autotg.data.models.Bot
 import com.autotg.data.models.Chat
 import com.autotg.data.models.ScheduledTask
 import com.autotg.data.models.TaskLog
-import com.autotg.data.models.AvatarMark
+import com.autotg.data.models.FeishuWebhook
 import kotlinx.coroutines.flow.Flow
 
 @Dao
@@ -48,6 +48,25 @@ interface AutoTGDao {
     @Query("SELECT * FROM chats WHERE chatId = :chatId LIMIT 1")
     suspend fun getChatByChatId(chatId: String): Chat?
 
+    // Feishu webhook operations
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertFeishuWebhook(webhook: FeishuWebhook): Long
+
+    @Update
+    suspend fun updateFeishuWebhook(webhook: FeishuWebhook)
+
+    @Delete
+    suspend fun deleteFeishuWebhook(webhook: FeishuWebhook)
+
+    @Query("SELECT * FROM feishu_webhooks ORDER BY id ASC")
+    fun getAllFeishuWebhooks(): Flow<List<FeishuWebhook>>
+
+    @Query("SELECT * FROM feishu_webhooks WHERE id = :id")
+    suspend fun getFeishuWebhookById(id: Long): FeishuWebhook?
+
+    @Query("SELECT * FROM feishu_webhooks WHERE webhookUrl = :webhookUrl LIMIT 1")
+    suspend fun getFeishuWebhookByUrl(webhookUrl: String): FeishuWebhook?
+
     // ScheduledTask operations
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertTask(task: ScheduledTask): Long
@@ -67,27 +86,56 @@ interface AutoTGDao {
     @Query(
         """
         SELECT * FROM scheduled_tasks
-        WHERE botId = :botId
-          AND chatId = :chatId
+        WHERE ((:botId IS NULL AND botId IS NULL) OR botId = :botId)
+          AND ((:chatId IS NULL AND chatId IS NULL) OR chatId = :chatId)
+          AND deliveryChannel = :deliveryChannel
+          AND ((:feishuWebhookId IS NULL AND feishuWebhookId IS NULL) OR feishuWebhookId = :feishuWebhookId)
           AND content = :content
           AND parseMode = :parseMode
           AND isEnabled = :isEnabled
           AND (
-                (:cronExpression IS NULL AND cronExpression IS NULL AND scheduledTime = :scheduledTime)
+                (:lunarMonth IS NULL AND lunarMonth IS NULL AND lunarDay IS NULL AND lunarLeapMonth = 0)
+                OR
+                (
+                    :lunarMonth IS NOT NULL
+                    AND lunarMonth = :lunarMonth
+                    AND lunarDay = :lunarDay
+                    AND lunarLeapMonth = :lunarLeapMonth
+                )
+              )
+          AND (
+                (
+                    :cronExpression IS NULL
+                    AND :lunarMonth IS NULL
+                    AND cronExpression IS NULL
+                    AND scheduledTime = :scheduledTime
+                )
                 OR
                 (:cronExpression IS NOT NULL AND cronExpression = :cronExpression)
+                OR
+                (
+                    :lunarMonth IS NOT NULL
+                    AND lunarMonth = :lunarMonth
+                    AND lunarDay = :lunarDay
+                    AND lunarLeapMonth = :lunarLeapMonth
+                )
               )
         LIMIT 1
         """
     )
     suspend fun findDuplicateTask(
-        botId: Long,
-        chatId: Long,
+        deliveryChannel: String,
+        botId: Long?,
+        chatId: Long?,
+        feishuWebhookId: Long?,
         content: String,
         parseMode: String,
         scheduledTime: Long,
         isEnabled: Boolean,
-        cronExpression: String?
+        cronExpression: String?,
+        lunarMonth: Int?,
+        lunarDay: Int?,
+        lunarLeapMonth: Boolean
     ): ScheduledTask?
 
     @Query("SELECT * FROM scheduled_tasks WHERE status = 'PENDING' ORDER BY scheduledTime ASC, id ASC")
@@ -109,19 +157,4 @@ interface AutoTGDao {
     @Query("DELETE FROM task_logs")
     suspend fun clearAllLogs()
 
-    // AvatarMark operations
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun insertAvatarMark(mark: AvatarMark)
-
-    @Delete
-    suspend fun deleteAvatarMark(mark: AvatarMark)
-
-    @Query("SELECT * FROM avatar_marks ORDER BY timestamp DESC")
-    fun getAllAvatarMarks(): Flow<List<AvatarMark>>
-
-    @Query("SELECT EXISTS(SELECT 1 FROM avatar_marks WHERE uri = :uri)")
-    fun isAvatarMarked(uri: String): Flow<Boolean>
-
-    @Query("DELETE FROM avatar_marks")
-    suspend fun clearAllAvatarMarks()
 }

@@ -1,6 +1,6 @@
 package com.autotg.di
 
-import com.autotg.data.remote.TelegramApi
+import com.autotg.data.remote.FeishuApi
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -12,7 +12,7 @@ import javax.inject.Singleton
 @Module
 @InstallIn(SingletonComponent::class)
 object NetworkModule {
-    private const val BASE_URL = "https://api.telegram.org/"
+    private const val BASE_URL = "https://open.feishu.cn/"
 
     @Provides
     @Singleton
@@ -25,7 +25,7 @@ object NetworkModule {
 
     @Provides
     @Singleton
-    fun provideTelegramApi(retrofit: Retrofit): TelegramApi {
-        return retrofit.create(TelegramApi::class.java)
+    fun provideFeishuApi(retrofit: Retrofit): FeishuApi {
+        return retrofit.create(FeishuApi::class.java)
     }
 }

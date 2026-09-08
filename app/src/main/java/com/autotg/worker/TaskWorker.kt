@@ -4,13 +4,14 @@ import android.content.Context
 import androidx.hilt.work.HiltWorker
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
+import com.autotg.utils.TaskAlarmScheduler
 import com.autotg.utils.TaskSendExecutor
 import com.autotg.utils.TaskSendOutcome
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
 
 @HiltWorker
-class TelegramWorker @AssistedInject constructor(
+class TaskWorker @AssistedInject constructor(
     @Assisted context: Context,
     @Assisted params: WorkerParameters,
     private val taskSendExecutor: TaskSendExecutor
@@ -19,8 +20,19 @@ class TelegramWorker @AssistedInject constructor(
     override suspend fun doWork(): Result {
         val taskId = inputData.getLong(KEY_TASK_ID, -1L)
         if (taskId == -1L) return Result.failure()
+        val triggerAtMillis = inputData.getLong(
+            TaskAlarmScheduler.EXTRA_TRIGGER_AT_MILLIS,
+            0L
+        )
+        val forceExecution = inputData.getBoolean(KEY_FORCE_EXECUTION, false)
 
-        return when (taskSendExecutor.execute(taskId)) {
+        return when (
+            taskSendExecutor.execute(
+                taskId = taskId,
+                triggerAtMillis = triggerAtMillis,
+                forceExecution = forceExecution
+            )
+        ) {
             TaskSendOutcome.FINAL_FAILURE -> Result.failure()
             TaskSendOutcome.SENT,
             TaskSendOutcome.RETRY_SCHEDULED,
@@ -31,5 +43,6 @@ class TelegramWorker @AssistedInject constructor(
 
     companion object {
         const val KEY_TASK_ID = "taskId"
+        const val KEY_FORCE_EXECUTION = "forceExecution"
     }
 }

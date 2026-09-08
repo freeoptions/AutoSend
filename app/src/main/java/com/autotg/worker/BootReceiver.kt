@@ -4,7 +4,6 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import com.autotg.data.repository.TelegramRepository
-import com.autotg.service.KeepAliveService
 import com.autotg.utils.ExitReasonTracker
 import com.autotg.utils.RecoveryScheduler
 import com.autotg.utils.SchedulerRecovery
@@ -40,7 +39,6 @@ class BootReceiver : BroadcastReceiver() {
                     ExitReasonTracker.recordLatestExitIfNeeded(context, repository)
                     RecoveryScheduler.forceRebuildRecoveryWork(context)
                     SchedulerRecovery.recoverEnabledTasks(context, repository)
-                    KeepAliveService.startIfEnabled(context)
                 } finally {
                     pendingResult.finish()
                 }

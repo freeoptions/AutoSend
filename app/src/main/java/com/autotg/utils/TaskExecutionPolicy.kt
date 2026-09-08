@@ -15,14 +15,14 @@ object TaskExecutionPolicy {
         }
 
         if (task.status == TaskStatus.SUCCESS) {
-            return if (task.cronExpression.isNullOrBlank()) {
+            return if (!RecurringScheduleUtils.isRecurring(task)) {
                 TaskExecutionDecision.SkipAlreadyCompleted
             } else {
                 TaskExecutionDecision.AdvanceCompletedRecurring
             }
         }
 
-        if (task.cronExpression.isNullOrBlank() && task.status != TaskStatus.PENDING) {
+        if (!RecurringScheduleUtils.isRecurring(task) && task.status != TaskStatus.PENDING) {
             return TaskExecutionDecision.SkipAlreadyCompleted
         }
 

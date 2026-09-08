@@ -4,11 +4,8 @@ import android.app.AlarmManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
-import android.os.Build
 import android.util.Log
-import com.autotg.service.KeepAliveDiagnostics
 import com.autotg.worker.RecoveryCheckReceiver
-import com.autotg.worker.ServiceRestartReceiver
 
 data class RecoveryScheduleSnapshot(
     val nextDailyRecoveryAt: Long,
@@ -16,14 +13,11 @@ data class RecoveryScheduleSnapshot(
 )
 
 object RecoveryScheduler {
-    const val ACTION_RESTART_KEEP_ALIVE = "com.autotg.action.RESTART_KEEP_ALIVE"
     const val ACTION_RUN_RECOVERY_CHECK = "com.autotg.action.RUN_RECOVERY_CHECK"
     const val EXTRA_RECOVERY_KIND = "recovery_kind"
 
-    private const val KEEP_ALIVE_REQUEST_CODE = 7001
     private const val DAILY_RECOVERY_REQUEST_CODE = 7002
     private const val PREFLIGHT_RECOVERY_REQUEST_CODE = 7003
-    private const val KEEP_ALIVE_RESTART_DELAY_MS = 15_000L
     private const val LOW_FREQUENCY_RECOVERY_REPEAT_MS = 24L * 60L * 60L * 1000L
     private const val TASK_PREFLIGHT_LEAD_MS = 30L * 60L * 1000L
     private const val PREFLIGHT_REARM_GUARD_MS = 60_000L
@@ -57,8 +51,7 @@ object RecoveryScheduler {
         triggerAtMillis: Long,
         requestCode: Int,
         recoveryKind: String,
-        preferenceKey: String,
-        exactPreferred: Boolean
+        preferenceKey: String
     ) {
         val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
         val pendingIntent = PendingIntent.getBroadcast(
@@ -73,50 +66,23 @@ object RecoveryScheduler {
         )
 
         try {
-            if (
-                exactPreferred &&
-                Build.VERSION.SDK_INT >= Build.VERSION_CODES.M &&
-                canScheduleExact(alarmManager)
-            ) {
-                alarmManager.setExactAndAllowWhileIdle(
-                    AlarmManager.RTC_WAKEUP,
-                    triggerAtMillis,
-                    pendingIntent
-                )
-            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                alarmManager.setAndAllowWhileIdle(
-                    AlarmManager.RTC_WAKEUP,
-                    triggerAtMillis,
-                    pendingIntent
-                )
-            } else {
-                if (exactPreferred) {
-                    alarmManager.setExact(
-                        AlarmManager.RTC_WAKEUP,
-                        triggerAtMillis,
-                        pendingIntent
-                    )
-                } else {
-                    alarmManager.set(
-                        AlarmManager.RTC_WAKEUP,
-                        triggerAtMillis,
-                        pendingIntent
-                    )
-                }
-            }
+            // 恢复检查允许延迟，不占用精确闹钟；准点主链路只在 TaskAlarmScheduler 中。
+            alarmManager.setAndAllowWhileIdle(
+                AlarmManager.RTC_WAKEUP,
+                triggerAtMillis,
+                pendingIntent
+            )
             context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                 .edit()
                 .putLong(preferenceKey, triggerAtMillis)
                 .remove(LEGACY_KEY_NEXT_RECOVERY_AT)
                 .apply()
-            updateNextRecoveryDiagnostic(context)
         } catch (e: RuntimeException) {
             Log.w(TAG, "无法注册进程外恢复检查。", e)
             context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                 .edit()
                 .remove(preferenceKey)
                 .apply()
-            updateNextRecoveryDiagnostic(context)
         }
     }
 
@@ -144,8 +110,7 @@ object RecoveryScheduler {
             triggerAtMillis = preflightAt,
             requestCode = PREFLIGHT_RECOVERY_REQUEST_CODE,
             recoveryKind = RECOVERY_KIND_PREFLIGHT,
-            preferenceKey = KEY_NEXT_PREFLIGHT_AT,
-            exactPreferred = true
+            preferenceKey = KEY_NEXT_PREFLIGHT_AT
         )
     }
 
@@ -156,7 +121,6 @@ object RecoveryScheduler {
                 .remove(KEY_NEXT_PREFLIGHT_AT)
                 .apply()
             ensureRecoveryWork(context)
-            updateNextRecoveryDiagnostic(context)
         } else {
             scheduleNextRecoveryCheckFromNow(context)
         }
@@ -197,68 +161,6 @@ object RecoveryScheduler {
             .remove(KEY_NEXT_PREFLIGHT_AT)
             .remove(LEGACY_KEY_NEXT_RECOVERY_AT)
             .apply()
-        KeepAliveDiagnostics.clearNextRecovery(context)
-    }
-
-    fun scheduleKeepAliveRestart(context: Context, delayMillis: Long = KEEP_ALIVE_RESTART_DELAY_MS) {
-        if (!com.autotg.service.KeepAliveService.isEnabled(context)) return
-
-        val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
-        val triggerAtMillis = System.currentTimeMillis() + delayMillis
-        val pendingIntent = PendingIntent.getBroadcast(
-            context,
-            KEEP_ALIVE_REQUEST_CODE,
-            Intent(context, ServiceRestartReceiver::class.java).apply {
-                action = ACTION_RESTART_KEEP_ALIVE
-                `package` = context.packageName
-            },
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-
-        try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && canScheduleExact(alarmManager)) {
-                alarmManager.setExactAndAllowWhileIdle(
-                    AlarmManager.RTC_WAKEUP,
-                    triggerAtMillis,
-                    pendingIntent
-                )
-            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                alarmManager.setAndAllowWhileIdle(
-                    AlarmManager.RTC_WAKEUP,
-                    triggerAtMillis,
-                    pendingIntent
-                )
-            } else {
-                alarmManager.set(
-                    AlarmManager.RTC_WAKEUP,
-                    triggerAtMillis,
-                    pendingIntent
-                )
-            }
-        } catch (e: RuntimeException) {
-            Log.w(TAG, "无法注册守护服务重启检查。", e)
-        }
-    }
-
-    fun cancelKeepAliveRestart(context: Context) {
-        val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
-        val pendingIntent = PendingIntent.getBroadcast(
-            context,
-            KEEP_ALIVE_REQUEST_CODE,
-            Intent(context, ServiceRestartReceiver::class.java).apply {
-                action = ACTION_RESTART_KEEP_ALIVE
-                `package` = context.packageName
-            },
-            PendingIntent.FLAG_NO_CREATE or PendingIntent.FLAG_IMMUTABLE
-        )
-        if (pendingIntent != null) {
-            alarmManager.cancel(pendingIntent)
-            pendingIntent.cancel()
-        }
-    }
-
-    private fun canScheduleExact(alarmManager: AlarmManager): Boolean {
-        return Build.VERSION.SDK_INT < Build.VERSION_CODES.S || alarmManager.canScheduleExactAlarms()
     }
 
     private fun scheduleDailyRecovery(context: Context, triggerAtMillis: Long) {
@@ -267,25 +169,8 @@ object RecoveryScheduler {
             triggerAtMillis = triggerAtMillis,
             requestCode = DAILY_RECOVERY_REQUEST_CODE,
             recoveryKind = RECOVERY_KIND_DAILY,
-            preferenceKey = KEY_NEXT_DAILY_RECOVERY_AT,
-            exactPreferred = true
+            preferenceKey = KEY_NEXT_DAILY_RECOVERY_AT
         )
-    }
-
-    private fun updateNextRecoveryDiagnostic(context: Context) {
-        val now = System.currentTimeMillis()
-        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        val nextRecoveryAt = sequenceOf(
-            prefs.getLong(KEY_NEXT_DAILY_RECOVERY_AT, 0L),
-            prefs.getLong(KEY_NEXT_PREFLIGHT_AT, 0L)
-        ).filter { it > now }
-            .minOrNull()
-
-        if (nextRecoveryAt != null) {
-            KeepAliveDiagnostics.recordNextRecovery(context, nextRecoveryAt)
-        } else {
-            KeepAliveDiagnostics.clearNextRecovery(context)
-        }
     }
 
 }

@@ -13,7 +13,7 @@ object ExitReasonTracker {
     private const val KEY_LAST_TIMESTAMP = "last_timestamp"
     private const val SYSTEM_TASK_ID = -999L
     private const val SYSTEM_TASK_NAME = "[\u7cfb\u7edf\u8bca\u65ad]"
-    private const val SYSTEM_BOT_NAME = "AutoTG"
+    private const val SYSTEM_BOT_NAME = "AutoSend"
     private const val SYSTEM_CHAT_NAME = "\u8fdb\u7a0b\u9000\u51fa\u539f\u56e0"
 
     suspend fun recordLatestExitIfNeeded(context: Context, repository: TelegramRepository) {
