@@ -6,11 +6,11 @@ plugins {
 }
 
 android {
-    namespace = "com.autotg"
+    namespace = "com.autosend"
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "com.autotg"
+        applicationId = "com.autosend"
         minSdk = 26
         targetSdk = 34
         versionCode = 1

@@ -1,0 +1,49 @@
+package com.autosend.data.local
+
+import androidx.room.TypeConverter
+import com.autosend.data.models.LogStatus
+import com.autosend.data.models.DeliveryChannel
+import com.autosend.data.models.MessageParseMode
+import com.autosend.data.models.TaskStatus
+
+class Converters {
+    @TypeConverter
+    fun fromStatus(status: TaskStatus): String {
+        return status.name
+    }
+
+    @TypeConverter
+    fun toStatus(status: String): TaskStatus {
+        return TaskStatus.valueOf(status)
+    }
+
+    @TypeConverter
+    fun fromLogStatus(status: LogStatus): String {
+        return status.name
+    }
+
+    @TypeConverter
+    fun toLogStatus(status: String): LogStatus {
+        return LogStatus.valueOf(status)
+    }
+
+    @TypeConverter
+    fun fromParseMode(parseMode: MessageParseMode): String {
+        return parseMode.name
+    }
+
+    @TypeConverter
+    fun toParseMode(parseMode: String): MessageParseMode {
+        return runCatching { MessageParseMode.valueOf(parseMode) }
+            .getOrDefault(MessageParseMode.NONE)
+    }
+
+    @TypeConverter
+    fun fromDeliveryChannel(channel: DeliveryChannel): String = channel.name
+
+    @TypeConverter
+    fun toDeliveryChannel(channel: String): DeliveryChannel {
+        return runCatching { DeliveryChannel.valueOf(channel) }
+            .getOrDefault(DeliveryChannel.TELEGRAM)
+    }
+}

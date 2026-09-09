@@ -25,5 +25,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "AutoTG"
+rootProject.name = "AutoSend"
 include(":app")

@@ -3,7 +3,7 @@
     xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
-    <!-- AutoTG 使用适用范围更广、可由用户撤销的精确闹钟特殊权限。
+    <!-- AutoSend 使用适用范围更广、可由用户撤销的精确闹钟特殊权限。
          USE_EXACT_ALARM 仅适用于符合商店政策的系统闹钟/日历类应用，不能与此权限混用。 -->
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
@@ -13,13 +13,13 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
 
     <application
-        android:name=".AutoTGApplication"
+        android:name=".AutoSendApplication"
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
-        android:theme="@style/Theme.AutoTG">
+        android:theme="@style/Theme.AutoSend">
 
         <provider
             android:name="androidx.startup.InitializationProvider"
@@ -35,7 +35,7 @@
         <activity
             android:name=".MainActivity"
             android:exported="true"
-            android:theme="@style/Theme.AutoTG">
+            android:theme="@style/Theme.AutoSend">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
