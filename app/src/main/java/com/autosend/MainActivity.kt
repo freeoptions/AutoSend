@@ -17,6 +17,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.autosend.ui.screens.ConfigScreen
 import com.autosend.ui.screens.LogScreen
 import com.autosend.ui.screens.MainScreen
+import com.autosend.ui.theme.AutoSendTheme
 import com.autosend.ui.viewmodels.MainViewModel
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
@@ -30,7 +31,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
-            MaterialTheme {
+            AutoSendTheme {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background

@@ -1,6 +1,7 @@
 package com.autosend.ui.screens
 
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -21,6 +22,8 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
@@ -55,6 +58,7 @@ import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -70,7 +74,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
@@ -83,7 +90,10 @@ import com.autosend.data.models.TaskStatus
 import com.autosend.data.models.isUnreadResult
 import com.autosend.ui.components.PaginationControls
 import com.autosend.ui.components.TaskCreationDialog
+import com.autosend.ui.theme.AutoSendColors
 import com.autosend.ui.viewmodels.MainViewModel
+import com.autosend.utils.LunarCalendarUtils
+import com.autosend.utils.LunarDate
 import com.autosend.utils.PinyinUtils
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
@@ -91,7 +101,7 @@ import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 
-private const val TITLE_BOARD = "AutoSend 任务看板"
+private const val TITLE_BOARD = "AutoSend"
 private const val DESC_INFO = "状态说明"
 private const val DESC_LOGS = "发送记录"
 private const val DESC_SETTINGS = "配置管理"
@@ -115,11 +125,62 @@ private const val TEXT_FINAL_FAILURE = "最终失败原因："
 private const val TEXT_LAST_ERROR = "上次执行出错："
 private const val DATE_FORMAT_TASK = "MM月dd日 HH:mm"
 private const val TASK_PAGE_SIZE = 10
+private val SOLAR_FESTIVALS = mapOf(
+    (1 to 1) to "元旦",
+    (2 to 14) to "情人节",
+    (3 to 8) to "妇女节",
+    (4 to 1) to "愚人节",
+    (5 to 1) to "劳动节",
+    (5 to 4) to "青年节",
+    (6 to 1) to "儿童节",
+    (7 to 1) to "建党节",
+    (8 to 1) to "建军节",
+    (9 to 10) to "教师节",
+    (10 to 1) to "国庆节",
+    (12 to 24) to "平安夜",
+    (12 to 25) to "圣诞节"
+)
+
+private val LUNAR_FESTIVALS = mapOf(
+    (1 to 1) to "春节",
+    (1 to 15) to "元宵节",
+    (5 to 5) to "端午节",
+    (7 to 7) to "七夕",
+    (8 to 15) to "中秋节",
+    (9 to 9) to "重阳节",
+    (12 to 8) to "腊八节",
+    (12 to 23) to "北方小年",
+    (12 to 24) to "南方小年"
+)
+
+private val LUNAR_MONTH_NAMES = listOf(
+    "", "正", "二", "三", "四", "五", "六", "七", "八", "九", "十", "冬", "腊"
+)
+
+private val LUNAR_DAY_NAMES = listOf(
+    "", "初一", "初二", "初三", "初四", "初五", "初六", "初七", "初八", "初九", "初十",
+    "十一", "十二", "十三", "十四", "十五", "十六", "十七", "十八", "十九", "二十",
+    "廿一", "廿二", "廿三", "廿四", "廿五", "廿六", "廿七", "廿八", "廿九", "三十"
+)
 
 private enum class TaskBoardFilter(val title: String) {
     ALL("全部任务"),
     THIS_MONTH("本月触发"),
-    NEXT_TRIGGER("下次触发")
+    NEXT_TRIGGER("下次触发"),
+    ENABLED("启用"),
+    DISABLED("禁用")
+}
+
+private fun formatLunarDate(date: LunarDate): String {
+    val monthName = LUNAR_MONTH_NAMES.getOrNull(date.month).orEmpty()
+    val dayName = LUNAR_DAY_NAMES.getOrNull(date.day).orEmpty()
+    val leapPrefix = if (date.isLeapMonth) "闰" else ""
+    return "${leapPrefix}${monthName}月$dayName"
+}
+
+private fun findTodayFestival(calendar: Calendar, lunarDate: LunarDate): String? {
+    val solarKey = (calendar.get(Calendar.MONTH) + 1) to calendar.get(Calendar.DAY_OF_MONTH)
+    return SOLAR_FESTIVALS[solarKey] ?: LUNAR_FESTIVALS[lunarDate.month to lunarDate.day]
 }
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
@@ -169,6 +230,11 @@ fun MainScreen(
             )
         }
     }
+    val nextTask = remember(allTasks) {
+        allTasks
+            .filter { it.isEnabled && it.scheduledTime > 0L }
+            .minByOrNull { it.scheduledTime }
+    }
 
     LaunchedEffect(allTasks) {
         editingTask = editingTask?.takeIf { current -> allTasks.any { it.id == current.id } }
@@ -177,12 +243,24 @@ fun MainScreen(
     }
 
     Scaffold(
+        containerColor = AutoSendColors.background,
         topBar = {
             TopAppBar(
-                title = { Text(TITLE_BOARD) },
+                title = {
+                    Text(
+                        TITLE_BOARD,
+                        style = MaterialTheme.typography.titleLarge,
+                        color = AutoSendColors.ink,
+                        maxLines = 1
+                    )
+                },
                 actions = {
                     IconButton(onClick = { showInfoDialog = true }) {
-                        Icon(Icons.Default.Info, contentDescription = DESC_INFO)
+                        Icon(
+                            Icons.Default.Info,
+                            contentDescription = DESC_INFO,
+                            tint = AutoSendColors.blue
+                        )
                     }
                     Box {
                         IconButton(onClick = onNavigateToLogs) {
@@ -192,7 +270,8 @@ fun MainScreen(
                                     "$DESC_LOGS，有${unreadResultCount}条未读结果"
                                 } else {
                                     DESC_LOGS
-                                }
+                                },
+                                tint = AutoSendColors.blue
                             )
                         }
                         if (unreadResultCount > 0) {
@@ -202,12 +281,12 @@ fun MainScreen(
                                     .padding(top = 6.dp, end = 6.dp)
                                     .size(18.dp)
                                     .clip(CircleShape)
-                                    .background(MaterialTheme.colorScheme.error),
+                                    .background(AutoSendColors.error),
                                 contentAlignment = Alignment.Center
                             ) {
                                 Text(
                                     unreadResultCount.coerceAtMost(99).toString(),
-                                    color = MaterialTheme.colorScheme.onError,
+                                    color = Color.White,
                                     style = MaterialTheme.typography.labelSmall,
                                     maxLines = 1
                                 )
@@ -215,13 +294,26 @@ fun MainScreen(
                         }
                     }
                     IconButton(onClick = onNavigateToConfig) {
-                        Icon(Icons.Default.Settings, contentDescription = DESC_SETTINGS)
+                        Icon(
+                            Icons.Default.Settings,
+                            contentDescription = DESC_SETTINGS,
+                            tint = AutoSendColors.blue
+                        )
                     }
-                }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = Color.White
+                )
             )
         },
         floatingActionButton = {
-            FloatingActionButton(onClick = { showCreateDialog = true }) {
+            FloatingActionButton(
+                onClick = { showCreateDialog = true },
+                modifier = Modifier.padding(end = 16.dp, bottom = 8.dp),
+                shape = CircleShape,
+                containerColor = AutoSendColors.blue,
+                contentColor = Color.White
+            ) {
                 Icon(Icons.Default.Add, contentDescription = DESC_ADD_TASK)
             }
         }
@@ -234,18 +326,33 @@ fun MainScreen(
             if (feishuWebhooks.isEmpty()) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text("还没有飞书发送目标", style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            "还没有飞书发送目标",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = AutoSendColors.ink
+                        )
                         Spacer(Modifier.height(8.dp))
                         Text(
                             "先添加 Webhook，再创建定时任务",
                             style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                            color = AutoSendColors.muted
                         )
                         Spacer(Modifier.height(16.dp))
-                        Button(onClick = onNavigateToConfig) { Text("去配置") }
+                        Button(
+                            onClick = onNavigateToConfig,
+                            shape = RoundedCornerShape(14.dp)
+                        ) { Text("去配置") }
                     }
                 }
             } else {
+                OverviewHeader(
+                    nextTask = nextTask,
+                    targetName = if (feishuWebhooks.size > 1) {
+                        nextTask?.feishuWebhookId?.let(webhookNames::get)
+                    } else {
+                        null
+                    }
+                )
                 TaskBoardControls(
                     query = taskSearchQuery,
                     onQueryChange = { taskSearchQuery = it },
@@ -253,25 +360,27 @@ fun MainScreen(
                     onFilterChange = { selectedTaskFilterIndex = it }
                 )
                 val currentPage = pagerState.currentPage.coerceIn(0, feishuWebhooks.lastIndex)
-                ScrollableTabRow(
-                    selectedTabIndex = currentPage,
-                    edgePadding = 16.dp,
-                    containerColor = MaterialTheme.colorScheme.surface,
-                    contentColor = MaterialTheme.colorScheme.primary,
-                    divider = {}
-                ) {
-                    feishuWebhooks.forEachIndexed { index, webhook ->
-                        Tab(
-                            selected = currentPage == index,
-                            onClick = { scope.launch { pagerState.animateScrollToPage(index) } },
-                            text = {
-                                Text(
-                                    webhook.name,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
-                        )
+                if (feishuWebhooks.size > 1) {
+                    ScrollableTabRow(
+                        selectedTabIndex = currentPage,
+                        edgePadding = 20.dp,
+                        containerColor = Color.Transparent,
+                        contentColor = AutoSendColors.blue,
+                        divider = {}
+                    ) {
+                        feishuWebhooks.forEachIndexed { index, webhook ->
+                            Tab(
+                                selected = currentPage == index,
+                                onClick = { scope.launch { pagerState.animateScrollToPage(index) } },
+                                text = {
+                                    Text(
+                                        webhook.name,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                            )
+                        }
                     }
                 }
                 HorizontalPager(
@@ -284,6 +393,7 @@ fun MainScreen(
                 ) { page ->
                     FeishuTaskPage(
                         webhook = feishuWebhooks[page],
+                        showTargetHeader = feishuWebhooks.size > 1,
                         allTasks = allTasks,
                         latestLogByTaskId = latestLogByTaskId,
                         searchQuery = taskSearchQuery,
@@ -391,9 +501,9 @@ fun MainScreen(
                 title = { Text(DESC_INFO) },
                 text = {
                     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        InfoRow(Icons.Default.Notifications, Color.Gray, TEXT_PENDING, "任务等待发送")
-                        InfoRow(Icons.Default.CheckCircle, Color(0xFF4CAF50), TEXT_SUCCESS, "任务发送成功")
-                        InfoRow(Icons.Default.Warning, MaterialTheme.colorScheme.error, TEXT_FAILED, "任务发送失败或错过执行")
+                        InfoRow(Icons.Default.Notifications, AutoSendColors.muted, TEXT_PENDING, "任务等待发送")
+                        InfoRow(Icons.Default.CheckCircle, AutoSendColors.success, TEXT_SUCCESS, "任务发送成功")
+                        InfoRow(Icons.Default.Warning, AutoSendColors.error, TEXT_FAILED, "任务发送失败或错过执行")
                     }
                 },
                 confirmButton = {
@@ -405,22 +515,165 @@ fun MainScreen(
 }
 
 @Composable
+private fun OverviewHeader(
+    nextTask: ScheduledTask?,
+    targetName: String?
+) {
+    val today = Calendar.getInstance()
+    val dateLabel = SimpleDateFormat("M月d日", Locale.CHINA).format(today.time)
+    val weekdayLabel = SimpleDateFormat("EEEE", Locale.CHINA).format(today.time)
+    val lunarDate = LunarCalendarUtils.getLunarDate(today.timeInMillis)
+    val lunarLabel = formatLunarDate(lunarDate)
+    val festivalName = findTodayFestival(today, lunarDate)
+
+    Column {
+        Row(
+            modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 4.dp, bottom = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            Text(
+                dateLabel,
+                style = MaterialTheme.typography.headlineSmall,
+                color = AutoSendColors.blue,
+                fontFamily = FontFamily.Serif,
+                fontSize = 20.sp,
+                fontWeight = FontWeight.Bold
+            )
+            Text(
+                weekdayLabel,
+                style = MaterialTheme.typography.headlineSmall,
+                color = AutoSendColors.ink,
+                fontFamily = FontFamily.Serif,
+                fontSize = 20.sp,
+                fontWeight = FontWeight.Bold
+            )
+            Text(
+                lunarLabel,
+                style = MaterialTheme.typography.headlineSmall,
+                color = AutoSendColors.muted,
+                fontFamily = FontFamily.Serif,
+                fontSize = 20.sp,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            festivalName?.let { festival ->
+                Text(
+                    festival,
+                    style = MaterialTheme.typography.headlineSmall,
+                    color = AutoSendColors.blue,
+                    fontFamily = FontFamily.Serif,
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp),
+            shape = RoundedCornerShape(20.dp),
+            colors = CardDefaults.cardColors(containerColor = AutoSendColors.hero),
+            elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+        ) {
+            if (nextTask == null) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(40.dp)
+                            .clip(CircleShape)
+                            .background(AutoSendColors.inkSoft),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            Icons.Default.Notifications,
+                            contentDescription = null,
+                            tint = Color.White,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                    Spacer(Modifier.width(13.dp))
+                    Column {
+                        Text("还没有定时任务", color = AutoSendColors.ink, fontWeight = FontWeight.Bold)
+                        Spacer(Modifier.height(3.dp))
+                        Text("新建一条，让重要的消息准时送达", color = AutoSendColors.muted, style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+            } else {
+                Row(
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            "下一次发送",
+                            color = AutoSendColors.blue,
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            SimpleDateFormat("MM月dd日 HH:mm", Locale.CHINA).format(Date(nextTask.scheduledTime)),
+                            color = AutoSendColors.ink,
+                            fontSize = 20.sp,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = FontFamily.Serif
+                        )
+                        Spacer(Modifier.height(3.dp))
+                        Text(
+                            listOfNotNull(nextTask.content, targetName).joinToString(" · "),
+                            color = AutoSendColors.muted,
+                            style = MaterialTheme.typography.bodySmall,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    Box(
+                        modifier = Modifier
+                            .size(40.dp)
+                            .clip(CircleShape)
+                            .background(AutoSendColors.blue),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            Icons.Default.Notifications,
+                            contentDescription = null,
+                            tint = Color.White,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun TaskBoardControls(
     query: String,
     onQueryChange: (String) -> Unit,
     selectedFilterIndex: Int,
     onFilterChange: (Int) -> Unit
 ) {
+    val keyboardController = LocalSoftwareKeyboardController.current
+    val focusManager = LocalFocusManager.current
+
     OutlinedTextField(
         value = query,
         onValueChange = onQueryChange,
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 8.dp),
+            .padding(horizontal = 20.dp, vertical = 4.dp),
         singleLine = true,
         placeholder = { Text("搜索任务、目标或拼音") },
         leadingIcon = {
-            Icon(Icons.Default.Search, contentDescription = "搜索")
+            Icon(Icons.Default.Search, contentDescription = "搜索", tint = AutoSendColors.blue)
         },
         trailingIcon = if (query.isNotEmpty()) {
             {
@@ -432,13 +685,19 @@ private fun TaskBoardControls(
             null
         },
         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-        shape = MaterialTheme.shapes.large
+        keyboardActions = KeyboardActions(
+            onSearch = {
+                keyboardController?.hide()
+                focusManager.clearFocus()
+            }
+        ),
+        shape = RoundedCornerShape(18.dp)
     )
     ScrollableTabRow(
         selectedTabIndex = selectedFilterIndex,
-        edgePadding = 16.dp,
-        containerColor = MaterialTheme.colorScheme.surface,
-        contentColor = MaterialTheme.colorScheme.primary,
+        edgePadding = 20.dp,
+        containerColor = Color.Transparent,
+        contentColor = AutoSendColors.blue,
         divider = {}
     ) {
         TaskBoardFilter.values().forEachIndexed { index, filter ->
@@ -454,6 +713,7 @@ private fun TaskBoardControls(
 @Composable
 private fun FeishuTaskPage(
     webhook: FeishuWebhook,
+    showTargetHeader: Boolean,
     allTasks: List<ScheduledTask>,
     latestLogByTaskId: Map<Long, TaskLog?>,
     searchQuery: String,
@@ -470,27 +730,38 @@ private fun FeishuTaskPage(
             .sortedWith(compareBy<ScheduledTask> { it.scheduledTime }.thenBy { it.id })
     }
     Column(Modifier.fillMaxSize()) {
-        Row(
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Surface(
-                shape = CircleShape,
-                color = MaterialTheme.colorScheme.primaryContainer,
-                modifier = Modifier.size(48.dp)
+        if (showTargetHeader) {
+            Row(
+                modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Icon(
-                        Icons.Default.Notifications,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onPrimaryContainer
+                Surface(
+                    shape = CircleShape,
+                    color = AutoSendColors.blueTint,
+                    modifier = Modifier.size(38.dp)
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            Icons.Default.Notifications,
+                            contentDescription = null,
+                            tint = AutoSendColors.blue
+                        )
+                    }
+                }
+                Spacer(Modifier.width(12.dp))
+                Column {
+                    Text(
+                        "飞书通知",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = AutoSendColors.blue
+                    )
+                    Text(
+                        webhook.name,
+                        style = MaterialTheme.typography.bodyLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = AutoSendColors.ink
                     )
                 }
-            }
-            Spacer(Modifier.width(12.dp))
-            Column {
-                Text("飞书通知", style = MaterialTheme.typography.labelMedium)
-                Text(webhook.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
             }
         }
         TaskList(
@@ -500,7 +771,11 @@ private fun FeishuTaskPage(
             searchQuery = searchQuery,
             taskFilter = taskFilter,
             taskSearchIndex = taskSearchIndex,
-            targetName = { webhook.name },
+            targetName = if (showTargetHeader) {
+                { _: ScheduledTask -> webhook.name }
+            } else {
+                null
+            },
             onEdit = onEdit,
             onToggleEnabled = onToggleEnabled,
             onDelete = onDelete,
@@ -516,7 +791,7 @@ private fun TaskList(
     searchQuery: String,
     taskFilter: TaskBoardFilter,
     taskSearchIndex: Map<Long, String>,
-    targetName: (ScheduledTask) -> String,
+    targetName: ((ScheduledTask) -> String)?,
     onEdit: (ScheduledTask) -> Unit,
     onToggleEnabled: (ScheduledTask, Boolean) -> Unit,
     onDelete: (ScheduledTask) -> Unit,
@@ -553,7 +828,10 @@ private fun TaskList(
                     .weight(1f),
                 contentAlignment = Alignment.Center
             ) {
-                Text(if (tasks.isEmpty()) TEXT_EMPTY_TASKS else "没有找到匹配的任务")
+                Text(
+                    if (tasks.isEmpty()) TEXT_EMPTY_TASKS else "没有找到匹配的任务",
+                    color = AutoSendColors.muted
+                )
             }
         } else {
             val pageTasks = filteredTasks
@@ -564,14 +842,14 @@ private fun TaskList(
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f),
-                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 16.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
+                contentPadding = PaddingValues(start = 20.dp, end = 20.dp, bottom = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 items(pageTasks, key = { it.id }) { task ->
                     TaskItem(
                         task = task,
                         displayStatus = task.resolveDisplayStatus(latestLogByTaskId[task.id]?.status),
-                        targetName = targetName(task),
+                        targetName = targetName?.invoke(task),
                         onClick = { onEdit(task) },
                         onToggleEnabled = { onToggleEnabled(task, it) },
                         onDelete = { onDelete(task) },
@@ -619,6 +897,8 @@ private fun applyTaskFilter(tasks: List<ScheduledTask>, filter: TaskBoardFilter)
                 ?: candidates.minOfOrNull { it.scheduledTime }
             if (nextTime == null) emptyList() else candidates.filter { it.scheduledTime == nextTime }
         }
+        TaskBoardFilter.ENABLED -> tasks.filter { it.isEnabled }
+        TaskBoardFilter.DISABLED -> tasks.filter { !it.isEnabled }
     }
 }
 
@@ -642,7 +922,7 @@ private fun InfoRow(
 private fun TaskItem(
     task: ScheduledTask,
     displayStatus: TaskStatus,
-    targetName: String,
+    targetName: String?,
     onClick: () -> Unit,
     onToggleEnabled: (Boolean) -> Unit,
     onDelete: () -> Unit,
@@ -654,18 +934,28 @@ private fun TaskItem(
             .fillMaxWidth()
             .clickable(onClick = onClick),
         colors = CardDefaults.cardColors(
-            containerColor = if (task.isEnabled) {
-                MaterialTheme.colorScheme.surfaceVariant
-            } else {
-                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
-            }
-        )
+            containerColor = if (task.isEnabled) Color.White else AutoSendColors.disabled
+        ),
+        shape = RoundedCornerShape(22.dp),
+        border = BorderStroke(1.dp, AutoSendColors.line),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
     ) {
-        Column(Modifier.padding(12.dp)) {
+        Column(Modifier.padding(start = 14.dp, top = 11.dp, end = 8.dp, bottom = 11.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                Box(
+                    modifier = Modifier
+                        .width(4.dp)
+                        .height(52.dp)
+                        .clip(RoundedCornerShape(5.dp))
+                        .background(
+                            if (task.isEnabled) AutoSendColors.amber
+                            else AutoSendColors.muted.copy(alpha = 0.35f)
+                        )
+                )
+                Spacer(Modifier.width(10.dp))
                 Column(Modifier.weight(1f)) {
                     Text(
                         task.content,
@@ -674,27 +964,29 @@ private fun TaskItem(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                         color = if (task.isEnabled) {
-                            MaterialTheme.colorScheme.onSurfaceVariant
+                            AutoSendColors.ink
                         } else {
-                            Color.Gray
+                            AutoSendColors.muted
                         }
                     )
                     Spacer(Modifier.height(4.dp))
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         StatusIcon(displayStatus)
                         Spacer(Modifier.width(6.dp))
-                        Text(
-                            targetName,
-                            style = MaterialTheme.typography.labelMedium,
-                            color = if (task.isEnabled) {
-                                MaterialTheme.colorScheme.primary
-                            } else {
-                                MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)
-                            },
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        Spacer(Modifier.width(8.dp))
+                        targetName?.takeIf { it.isNotBlank() }?.let { name ->
+                            Text(
+                                name,
+                                style = MaterialTheme.typography.labelMedium,
+                                color = if (task.isEnabled) {
+                                    AutoSendColors.blue
+                                } else {
+                                    AutoSendColors.blue.copy(alpha = 0.5f)
+                                },
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Spacer(Modifier.width(8.dp))
+                        }
                         Text(
                             "${dateFormat.format(Date(task.scheduledTime))}${when {
                                 task.isLunarRecurring -> TEXT_LUNAR_LOOP
@@ -702,7 +994,7 @@ private fun TaskItem(
                                 else -> ""
                             }}",
                             style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                            color = AutoSendColors.muted.copy(alpha = 0.75f)
                         )
                     }
                 }
@@ -711,7 +1003,7 @@ private fun TaskItem(
                         Icon(
                             Icons.Default.Notifications,
                             contentDescription = TEXT_SEND_NOW_DESC,
-                            tint = MaterialTheme.colorScheme.primary,
+                            tint = AutoSendColors.blue,
                             modifier = Modifier.size(20.dp)
                         )
                     }
@@ -731,7 +1023,7 @@ private fun TaskItem(
                         Icon(
                             Icons.Default.Delete,
                             contentDescription = TEXT_DELETE_DESC,
-                            tint = MaterialTheme.colorScheme.error.copy(alpha = 0.6f),
+                            tint = AutoSendColors.error.copy(alpha = 0.72f),
                             modifier = Modifier.size(20.dp)
                         )
                     }
@@ -747,7 +1039,7 @@ private fun TaskItem(
                 Text(
                     "$errorPrefix${task.lastError}",
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.error
+                    color = AutoSendColors.error
                 )
             }
         }
@@ -760,19 +1052,19 @@ private fun StatusIcon(status: TaskStatus, modifier: Modifier = Modifier) {
         TaskStatus.PENDING -> Icon(
             Icons.Default.Notifications,
             contentDescription = TEXT_PENDING,
-            tint = Color.Gray,
+            tint = AutoSendColors.muted,
             modifier = modifier.size(16.dp)
         )
         TaskStatus.SUCCESS -> Icon(
             Icons.Default.CheckCircle,
             contentDescription = TEXT_SUCCESS,
-            tint = Color(0xFF4CAF50),
+            tint = AutoSendColors.success,
             modifier = modifier.size(16.dp)
         )
         TaskStatus.FAILED -> Icon(
             Icons.Default.Warning,
             contentDescription = TEXT_FAILED,
-            tint = MaterialTheme.colorScheme.error,
+            tint = AutoSendColors.error,
             modifier = modifier.size(16.dp)
         )
     }

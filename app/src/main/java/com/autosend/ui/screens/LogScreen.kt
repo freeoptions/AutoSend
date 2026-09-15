@@ -1,6 +1,7 @@
 package com.autosend.ui.screens
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -13,6 +14,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
@@ -21,6 +23,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -31,7 +34,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -49,6 +52,7 @@ import androidx.compose.ui.unit.dp
 import com.autosend.data.models.LogStatus
 import com.autosend.data.models.TaskLog
 import com.autosend.ui.components.PaginationControls
+import com.autosend.ui.theme.AutoSendColors
 import com.autosend.ui.viewmodels.MainViewModel
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -119,19 +123,29 @@ fun LogScreen(
     }
 
     Scaffold(
+        containerColor = AutoSendColors.background,
         topBar = {
-            TopAppBar(
-                title = { Text(TITLE_LOGS) },
+            CenterAlignedTopAppBar(
+                title = {
+                    Text(
+                        TITLE_LOGS,
+                        style = MaterialTheme.typography.titleLarge,
+                        color = AutoSendColors.ink
+                    )
+                },
                 navigationIcon = {
                     IconButton(onClick = onNavigateBack) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = TITLE_BACK)
+                        Icon(Icons.Default.ArrowBack, contentDescription = TITLE_BACK, tint = AutoSendColors.blue)
                     }
                 },
                 actions = {
                     IconButton(onClick = { showClearConfirm = true }) {
-                        Icon(Icons.Default.Delete, contentDescription = TITLE_CLEAR)
+                        Icon(Icons.Default.Delete, contentDescription = TITLE_CLEAR, tint = AutoSendColors.error)
                     }
-                }
+                },
+                colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
+                    containerColor = AutoSendColors.background
+                )
             )
         }
     ) { padding ->
@@ -166,9 +180,9 @@ fun LogScreen(
         ) {
             ScrollableTabRow(
                 selectedTabIndex = selectedFilterIndex,
-                edgePadding = 16.dp,
-                containerColor = MaterialTheme.colorScheme.surface,
-                contentColor = MaterialTheme.colorScheme.primary,
+                edgePadding = 20.dp,
+                containerColor = Color.Transparent,
+                contentColor = AutoSendColors.blue,
                 divider = {}
             ) {
                 LogFilter.values().forEachIndexed { index, filter ->
@@ -198,8 +212,8 @@ fun LogScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .weight(1f),
-                    contentPadding = PaddingValues(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                    contentPadding = PaddingValues(start = 20.dp, end = 20.dp, bottom = 20.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
                     items(pageLogs, key = { it.id }) { log ->
                         LogItem(log, onRetry = { viewModel.retryFailedLog(log) })
@@ -225,16 +239,17 @@ fun LogItem(log: TaskLog, onRetry: () -> Unit) {
         LogStatus.SYSTEM -> ""
     }
     val statusColor = when (log.status) {
-        LogStatus.SUCCESS -> Color(0xFF4CAF50)
-        LogStatus.FAILED, LogStatus.MISSED -> MaterialTheme.colorScheme.error
+        LogStatus.SUCCESS -> AutoSendColors.success
+        LogStatus.FAILED, LogStatus.MISSED -> AutoSendColors.error
         LogStatus.SYSTEM -> Color.Transparent
     }
 
     Card(
         modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant
-        )
+        colors = CardDefaults.cardColors(containerColor = Color.White),
+        shape = RoundedCornerShape(20.dp),
+        border = BorderStroke(1.dp, AutoSendColors.line),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
             Row(
@@ -250,7 +265,7 @@ fun LogItem(log: TaskLog, onRetry: () -> Unit) {
                 Text(
                     text = dateFormat.format(Date(log.timestamp)),
                     style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                    color = AutoSendColors.muted.copy(alpha = 0.75f)
                 )
             }
 
@@ -271,7 +286,7 @@ fun LogItem(log: TaskLog, onRetry: () -> Unit) {
                 Text(
                     text = LABEL_BOT_CHAT.format(log.botName, log.chatName),
                     style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                    color = AutoSendColors.muted,
                     modifier = Modifier.weight(1f),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis

@@ -1,6 +1,8 @@
 package com.autosend.ui.components
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.layout.Arrangement
@@ -10,12 +12,17 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
@@ -34,6 +41,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -42,6 +50,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -52,8 +61,10 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.autosend.data.models.FeishuWebhook
 import com.autosend.data.models.ScheduledTask
+import com.autosend.ui.theme.AutoSendColors
 import com.autosend.utils.CronUtils
 import com.autosend.utils.LunarCalendarUtils
+import kotlinx.coroutines.delay
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -88,7 +99,7 @@ private enum class ScheduleMode {
     LUNAR
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun TaskCreationDialog(
     feishuWebhooks: List<FeishuWebhook>,
@@ -105,6 +116,17 @@ fun TaskCreationDialog(
         lunarLeapMonth: Boolean
     ) -> Unit
 ) {
+    val dialogScrollState = rememberScrollState()
+    val messageBringIntoViewRequester = remember { BringIntoViewRequester() }
+    var messageInputFocused by remember { mutableStateOf(false) }
+
+    LaunchedEffect(messageInputFocused) {
+        if (messageInputFocused) {
+            delay(150)
+            messageBringIntoViewRequester.bringIntoView()
+        }
+    }
+
     var selectedWebhook by remember(editingTask, initialFeishuWebhookId, feishuWebhooks) {
         mutableStateOf(
             feishuWebhooks.find {
@@ -212,30 +234,41 @@ fun TaskCreationDialog(
 
     Dialog(
         onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false)
+        properties = DialogProperties(
+            usePlatformDefaultWidth = false,
+            decorFitsSystemWindows = false
+        )
     ) {
-        Surface(
+        Box(
             modifier = Modifier
-                .fillMaxWidth(0.95f)
-                .fillMaxHeight(0.9f),
-            shape = androidx.compose.material3.MaterialTheme.shapes.extraLarge,
-            color = androidx.compose.material3.MaterialTheme.colorScheme.surface,
-            tonalElevation = 6.dp
+                .fillMaxSize()
+                .imePadding()
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            contentAlignment = Alignment.Center
         ) {
-            Column(Modifier.padding(16.dp)) {
-                Text(
-                    text = if (editingTask == null) TITLE_CREATE else TITLE_EDIT,
-                    style = androidx.compose.material3.MaterialTheme.typography.headlineSmall,
-                    fontWeight = FontWeight.Bold,
-                    color = androidx.compose.material3.MaterialTheme.colorScheme.primary
-                )
-                Spacer(Modifier.height(16.dp))
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth(0.98f)
+                    .fillMaxHeight(0.94f),
+                shape = RoundedCornerShape(28.dp),
+                color = Color.White,
+                tonalElevation = 0.dp,
+                border = BorderStroke(1.dp, AutoSendColors.line)
+            ) {
+                Column(Modifier.padding(16.dp)) {
+                    Text(
+                        text = if (editingTask == null) TITLE_CREATE else TITLE_EDIT,
+                        style = androidx.compose.material3.MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = AutoSendColors.ink
+                    )
+                    Spacer(Modifier.height(16.dp))
 
-                Column(
+                    Column(
                     modifier = Modifier
                         .weight(1f)
-                        .verticalScroll(rememberScrollState())
-                ) {
+                        .verticalScroll(dialogScrollState)
+                    ) {
                     Text(
                         LABEL_FEISHU_TARGET,
                         style = androidx.compose.material3.MaterialTheme.typography.titleSmall,
@@ -276,8 +309,9 @@ fun TaskCreationDialog(
 
                     Spacer(Modifier.height(16.dp))
                     Surface(
-                        tonalElevation = 2.dp,
-                        shape = androidx.compose.material3.MaterialTheme.shapes.medium,
+                        color = AutoSendColors.blueTint.copy(alpha = 0.55f),
+                        tonalElevation = 0.dp,
+                        shape = RoundedCornerShape(16.dp),
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Row(
@@ -570,40 +604,44 @@ fun TaskCreationDialog(
                         value = content,
                         onValueChange = { content = it },
                         label = { Text(LABEL_MESSAGE_CONTENT) },
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .bringIntoViewRequester(messageBringIntoViewRequester)
+                            .onFocusChanged { messageInputFocused = it.isFocused },
                         minLines = 3
                     )
-                }
+                    }
 
-                Spacer(Modifier.height(16.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End
-                ) {
-                    TextButton(onClick = onDismiss) { Text(ACTION_CANCEL) }
-                    Spacer(Modifier.width(8.dp))
-                    Button(
-                        onClick = {
-                            val time = when (scheduleMode) {
-                                ScheduleMode.CRON -> nextExecutionTimes.firstOrNull()
-                                ScheduleMode.LUNAR -> lunarNextExecutionTimes.firstOrNull()
-                                ScheduleMode.ONCE -> parsedTime?.time
-                            }
-                            if (selectedWebhook != null && time != null && content.isNotBlank() && canConfirm) {
-                                onConfirm(
-                                    selectedWebhook!!.id,
-                                    content,
-                                    time,
-                                    cronExpression.takeIf { scheduleMode == ScheduleMode.CRON },
-                                    lunarMonth.takeIf { scheduleMode == ScheduleMode.LUNAR },
-                                    lunarDay.takeIf { scheduleMode == ScheduleMode.LUNAR },
-                                    lunarLeapMonth && scheduleMode == ScheduleMode.LUNAR
-                                )
-                            }
-                        },
-                        enabled = canConfirm
+                    Spacer(Modifier.height(16.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End
                     ) {
-                        Text(if (editingTask == null) ACTION_CREATE else ACTION_SAVE)
+                        TextButton(onClick = onDismiss) { Text(ACTION_CANCEL) }
+                        Spacer(Modifier.width(8.dp))
+                        Button(
+                            onClick = {
+                                val time = when (scheduleMode) {
+                                    ScheduleMode.CRON -> nextExecutionTimes.firstOrNull()
+                                    ScheduleMode.LUNAR -> lunarNextExecutionTimes.firstOrNull()
+                                    ScheduleMode.ONCE -> parsedTime?.time
+                                }
+                                if (selectedWebhook != null && time != null && content.isNotBlank() && canConfirm) {
+                                    onConfirm(
+                                        selectedWebhook!!.id,
+                                        content,
+                                        time,
+                                        cronExpression.takeIf { scheduleMode == ScheduleMode.CRON },
+                                        lunarMonth.takeIf { scheduleMode == ScheduleMode.LUNAR },
+                                        lunarDay.takeIf { scheduleMode == ScheduleMode.LUNAR },
+                                        lunarLeapMonth && scheduleMode == ScheduleMode.LUNAR
+                                    )
+                                }
+                            },
+                            enabled = canConfirm
+                        ) {
+                            Text(if (editingTask == null) ACTION_CREATE else ACTION_SAVE)
+                        }
                     }
                 }
             }
@@ -637,8 +675,11 @@ private fun TargetCard(
     Card(
         modifier = modifier.clickable(onClick = onClick),
         colors = CardDefaults.cardColors(
-            containerColor = androidx.compose.material3.MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.4f)
-        )
+            containerColor = AutoSendColors.blueTint.copy(alpha = 0.55f)
+        ),
+        shape = RoundedCornerShape(18.dp),
+        border = BorderStroke(1.dp, AutoSendColors.line),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
     ) {
         Row(
             modifier = Modifier.padding(12.dp),
@@ -648,7 +689,7 @@ private fun TargetCard(
                 Text(
                     label,
                     style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
-                    color = androidx.compose.material3.MaterialTheme.colorScheme.primary
+                    color = AutoSendColors.blue
                 )
                 Text(
                     value,
@@ -661,7 +702,7 @@ private fun TargetCard(
             Icon(
                 Icons.Default.ArrowDropDown,
                 contentDescription = "选择目标",
-                tint = androidx.compose.material3.MaterialTheme.colorScheme.primary
+                tint = AutoSendColors.blue
             )
         }
     }
