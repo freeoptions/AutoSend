@@ -2,7 +2,6 @@ package com.autosend.utils
 
 import android.content.Context
 import com.autosend.data.models.LogStatus
-import com.autosend.data.models.DeliveryChannel
 import com.autosend.data.models.ScheduledTask
 import com.autosend.data.models.TaskLog
 import com.autosend.data.models.TaskStatus
@@ -33,7 +32,7 @@ object SchedulerRecovery {
 
         repository.getAllTasks()
             .first()
-            .filter { it.isEnabled && it.deliveryChannel == DeliveryChannel.FEISHU }
+            .filter { it.isEnabled && DeliveryChannelPolicy.isEnabled(it.deliveryChannel) }
             .forEach { task ->
                 recoverTask(context, repository, task, lastCheckTime, now)
             }

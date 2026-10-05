@@ -59,7 +59,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
-import com.autosend.data.models.FeishuWebhook
+import com.autosend.data.models.DeliveryTarget
 import com.autosend.data.models.ScheduledTask
 import com.autosend.ui.theme.AutoSendColors
 import com.autosend.utils.CronUtils
@@ -71,7 +71,7 @@ import java.util.Locale
 
 private const val TITLE_CREATE = "创建定时任务"
 private const val TITLE_EDIT = "编辑定时任务"
-private const val LABEL_FEISHU_TARGET = "发送到"
+private const val LABEL_TARGET = "发送到"
 private const val VALUE_UNSELECTED = "未选择"
 private const val MODE_ONCE = "单次定时"
 private const val MODE_CRON = "重复任务"
@@ -102,12 +102,12 @@ private enum class ScheduleMode {
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun TaskCreationDialog(
-    feishuWebhooks: List<FeishuWebhook>,
+    targets: List<DeliveryTarget>,
     editingTask: ScheduledTask? = null,
-    initialFeishuWebhookId: Long? = null,
+    initialTarget: DeliveryTarget? = null,
     onDismiss: () -> Unit,
     onConfirm: (
-        feishuWebhookId: Long,
+        target: DeliveryTarget,
         content: String,
         time: Long,
         cron: String?,
@@ -127,11 +127,12 @@ fun TaskCreationDialog(
         }
     }
 
-    var selectedWebhook by remember(editingTask, initialFeishuWebhookId, feishuWebhooks) {
+    var selectedTarget by remember(editingTask, initialTarget, targets) {
         mutableStateOf(
-            feishuWebhooks.find {
-                it.id == (editingTask?.feishuWebhookId ?: initialFeishuWebhookId)
-            } ?: feishuWebhooks.firstOrNull()
+            targets.find { target ->
+                editingTask?.let(target::matches) == true
+            } ?: initialTarget?.let { target -> targets.find { it == target } }
+                ?: targets.firstOrNull()
         )
     }
     var content by remember(editingTask) { mutableStateOf(editingTask?.content.orEmpty()) }
@@ -226,7 +227,7 @@ fun TaskCreationDialog(
         lunarNextExecutionTimes.isEmpty() -> "未来几年内找不到对应日期，请检查月份、日期或闰月设置"
         else -> null
     }
-    val canConfirm = selectedWebhook != null && content.isNotBlank() && when (scheduleMode) {
+    val canConfirm = selectedTarget != null && content.isNotBlank() && when (scheduleMode) {
         ScheduleMode.ONCE -> parsedTime != null
         ScheduleMode.CRON -> nextExecutionTimes.isNotEmpty()
         ScheduleMode.LUNAR -> lunarValidationMessage == null
@@ -270,38 +271,47 @@ fun TaskCreationDialog(
                         .verticalScroll(dialogScrollState)
                     ) {
                     Text(
-                        LABEL_FEISHU_TARGET,
+                        LABEL_TARGET,
                         style = androidx.compose.material3.MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.Bold
                     )
                     Spacer(Modifier.height(8.dp))
-                    var showWebhookMenu by remember { mutableStateOf(false) }
+                    var showTargetMenu by remember { mutableStateOf(false) }
                     Box(Modifier.fillMaxWidth()) {
                         TargetCard(
-                            label = "飞书 Webhook",
-                            value = selectedWebhook?.name ?: VALUE_UNSELECTED,
+                            label = selectedTarget?.channelName ?: "发送目标",
+                            value = selectedTarget?.name ?: VALUE_UNSELECTED,
                             modifier = Modifier.fillMaxWidth(),
-                            onClick = { showWebhookMenu = true }
+                            onClick = { showTargetMenu = true }
                         )
                         DropdownMenu(
-                            expanded = showWebhookMenu,
-                            onDismissRequest = { showWebhookMenu = false }
+                            expanded = showTargetMenu,
+                            onDismissRequest = { showTargetMenu = false }
                         ) {
-                            feishuWebhooks.forEach { webhook ->
+                            targets.forEach { target ->
                                 DropdownMenuItem(
-                                    text = { Text(webhook.name) },
+                                    text = {
+                                        Column {
+                                            Text(target.name)
+                                            Text(
+                                                target.channelName,
+                                                style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
+                                                color = AutoSendColors.muted
+                                            )
+                                        }
+                                    },
                                     onClick = {
-                                        selectedWebhook = webhook
-                                        showWebhookMenu = false
+                                        selectedTarget = target
+                                        showTargetMenu = false
                                     }
                                 )
                             }
                         }
                     }
-                    if (feishuWebhooks.isEmpty()) {
+                    if (targets.isEmpty()) {
                         Spacer(Modifier.height(8.dp))
                         Text(
-                            "请先在配置管理的“飞书”页添加 Webhook",
+                            "请先在配置管理中添加 QQ 群发送目标",
                             style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
                             color = androidx.compose.material3.MaterialTheme.colorScheme.error
                         )
@@ -626,9 +636,9 @@ fun TaskCreationDialog(
                                     ScheduleMode.LUNAR -> lunarNextExecutionTimes.firstOrNull()
                                     ScheduleMode.ONCE -> parsedTime?.time
                                 }
-                                if (selectedWebhook != null && time != null && content.isNotBlank() && canConfirm) {
+                                if (selectedTarget != null && time != null && content.isNotBlank() && canConfirm) {
                                     onConfirm(
-                                        selectedWebhook!!.id,
+                                        selectedTarget!!,
                                         content,
                                         time,
                                         cronExpression.takeIf { scheduleMode == ScheduleMode.CRON },

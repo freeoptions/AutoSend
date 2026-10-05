@@ -38,16 +38,19 @@ object TaskExecutionLogger {
             val bot = task?.botId?.let { dao.getBotById(it) }
             val chat = task?.chatId?.let { dao.getChatById(it) }
             val webhook = task?.feishuWebhookId?.let { dao.getFeishuWebhookById(it) }
+            val qqBot = task?.qqBotId?.let { dao.getQqBotById(it) }
             dao.insertLog(
                 TaskLog(
                     taskId = if (task != null) taskId else SYSTEM_TASK_ID,
                     taskContent = "[$stage] ${task?.content ?: "任务 $taskId"}",
                     botName = when (task?.deliveryChannel) {
                         com.autosend.data.models.DeliveryChannel.FEISHU -> "飞书"
+                        com.autosend.data.models.DeliveryChannel.QQ -> "QQ 群"
                         else -> bot?.name ?: "AutoSend"
                     },
                     chatName = when (task?.deliveryChannel) {
                         com.autosend.data.models.DeliveryChannel.FEISHU -> webhook?.name ?: "未知飞书群"
+                        com.autosend.data.models.DeliveryChannel.QQ -> qqBot?.name ?: "未知 QQ 群"
                         else -> chat?.name ?: "定时任务链路"
                     },
                     status = status,

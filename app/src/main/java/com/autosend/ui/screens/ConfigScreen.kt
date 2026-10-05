@@ -74,6 +74,7 @@ import androidx.compose.ui.unit.dp
 import androidx.documentfile.provider.DocumentFile
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.autosend.data.models.FeishuWebhook
+import com.autosend.data.models.QqBot
 import com.autosend.service.TaskExecutionService
 import com.autosend.ui.viewmodels.ConfigViewModel
 import com.autosend.ui.theme.AutoSendColors
@@ -98,12 +99,15 @@ fun ConfigScreen(
     val clipboard = LocalClipboardManager.current
     val scope = rememberCoroutineScope()
     val exportUri by viewModel.exportUri.collectAsState()
-    val webhooks by viewModel.feishuWebhooks.collectAsState()
-    val tabs = listOf("飞书", "设置")
+    val qqBots by viewModel.qqBots.collectAsState()
+    val tabs = listOf("QQ 群", "设置")
     val pager = rememberPagerState(pageCount = { tabs.size })
     var editingWebhook by remember { mutableStateOf<FeishuWebhook?>(null) }
     var showAddWebhook by remember { mutableStateOf(false) }
     var deletingWebhook by remember { mutableStateOf<FeishuWebhook?>(null) }
+    var editingQqBot by remember { mutableStateOf<QqBot?>(null) }
+    var showAddQqBot by remember { mutableStateOf(false) }
+    var deletingQqBot by remember { mutableStateOf<QqBot?>(null) }
     var showImport by remember { mutableStateOf(false) }
     var importMessage by remember { mutableStateOf("") }
 
@@ -188,7 +192,7 @@ fun ConfigScreen(
         floatingActionButton = {
             if (pager.currentPage == 0) {
                 FloatingActionButton(
-                    onClick = { showAddWebhook = true },
+                    onClick = { showAddQqBot = true },
                     shape = RoundedCornerShape(18.dp),
                     containerColor = AutoSendColors.blue,
                     contentColor = Color.White
@@ -222,18 +226,18 @@ fun ConfigScreen(
                 modifier = Modifier.fillMaxSize()
             ) { page ->
                 when (page) {
-                    0 -> FeishuWebhookList(
-                        webhooks = webhooks,
-                        onEdit = { editingWebhook = it },
-                        onDelete = { deletingWebhook = it },
-                        onTest = { webhook ->
-                            viewModel.testFeishuWebhook(webhook) { _, message ->
+                    0 -> QqBotList(
+                        bots = qqBots,
+                        onEdit = { editingQqBot = it },
+                        onDelete = { deletingQqBot = it },
+                        onTest = { bot ->
+                            viewModel.testQqBot(bot) { _, message ->
                                 Toast.makeText(context, message, Toast.LENGTH_LONG).show()
                             }
                         },
                         modifier = Modifier.fillMaxSize()
                     )
-                    else -> SettingsTab(
+                    1 -> SettingsTab(
                         exportUri = exportUri,
                         onSelectDirectory = { exportPicker.launch(null) },
                         modifier = Modifier.fillMaxSize(),
@@ -254,6 +258,47 @@ fun ConfigScreen(
             },
             onDismiss = { deletingWebhook = null }
         )
+    }
+
+    deletingQqBot?.let { bot ->
+        ConfirmDeleteDialog(
+            title = "删除 QQ 群目标",
+            message = "确定删除“${bot.name}”吗？关联的定时任务也将无法继续发送。",
+            onConfirm = {
+                viewModel.deleteQqBot(bot)
+                deletingQqBot = null
+            },
+            onDismiss = { deletingQqBot = null }
+        )
+    }
+
+    if (showAddQqBot || editingQqBot != null) {
+        AddQqBotDialog(
+            initial = editingQqBot,
+            onDismiss = {
+                showAddQqBot = false
+                editingQqBot = null
+            }
+        ) { name, appId, clientSecret, groupOpenId ->
+            if (editingQqBot == null) {
+                viewModel.addQqBot(name, appId, clientSecret, groupOpenId) { _, message ->
+                    Toast.makeText(context, message, Toast.LENGTH_LONG).show()
+                    showAddQqBot = false
+                }
+            } else {
+                viewModel.updateQqBot(
+                    editingQqBot!!.copy(
+                        name = name,
+                        appId = appId,
+                        clientSecret = clientSecret,
+                        groupOpenId = groupOpenId
+                    )
+                ) { _, message ->
+                    Toast.makeText(context, message, Toast.LENGTH_LONG).show()
+                    editingQqBot = null
+                }
+            }
+        }
     }
 
     if (showAddWebhook || editingWebhook != null) {
@@ -300,6 +345,100 @@ fun ConfigScreen(
                 importMessage = ""
             }
         )
+    }
+}
+
+@Composable
+private fun QqBotList(
+    bots: List<QqBot>,
+    onEdit: (QqBot) -> Unit,
+    onDelete: (QqBot) -> Unit,
+    onTest: (QqBot) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    if (bots.isEmpty()) {
+        Box(modifier = modifier, contentAlignment = Alignment.Center) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Icon(
+                    Icons.Default.NotificationsActive,
+                    contentDescription = null,
+                    modifier = Modifier.size(40.dp),
+                    tint = AutoSendColors.blue
+                )
+                Spacer(Modifier.height(12.dp))
+                Text("还没有 QQ 群目标", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    "先创建 QQ 官方机器人并添加群目标",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = AutoSendColors.muted
+                )
+            }
+        }
+        return
+    }
+
+    LazyColumn(
+        modifier = modifier,
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(
+            start = 20.dp,
+            end = 20.dp,
+            top = 12.dp,
+            bottom = 20.dp
+        ),
+        verticalArrangement = Arrangement.spacedBy(14.dp)
+    ) {
+        items(bots, key = { it.id }) { bot ->
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onEdit(bot) },
+                colors = CardDefaults.cardColors(containerColor = Color.White),
+                shape = RoundedCornerShape(20.dp),
+                border = BorderStroke(1.dp, AutoSendColors.line),
+                elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        Icons.Default.NotificationsActive,
+                        contentDescription = "QQ 群机器人",
+                        modifier = Modifier
+                            .size(40.dp)
+                            .clip(CircleShape)
+                            .background(AutoSendColors.blueTint)
+                            .padding(9.dp),
+                        tint = AutoSendColors.blue
+                    )
+                    Spacer(Modifier.width(12.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            bot.name,
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            "群 OpenID：${bot.groupOpenId}",
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = AutoSendColors.muted
+                        )
+                    }
+                    TextButton(onClick = { onTest(bot) }) { Text("测试") }
+                    IconButton(onClick = { onDelete(bot) }) {
+                        Icon(
+                            Icons.Default.Delete,
+                            contentDescription = "删除",
+                            tint = AutoSendColors.error
+                        )
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -395,6 +534,77 @@ private fun FeishuWebhookList(
             }
         }
     }
+}
+
+@Composable
+private fun AddQqBotDialog(
+    initial: QqBot?,
+    onDismiss: () -> Unit,
+    onConfirm: (String, String, String, String) -> Unit
+) {
+    var name by remember { mutableStateOf(initial?.name.orEmpty()) }
+    var appId by remember { mutableStateOf(initial?.appId.orEmpty()) }
+    var clientSecret by remember { mutableStateOf(initial?.clientSecret.orEmpty()) }
+    var groupOpenId by remember { mutableStateOf(initial?.groupOpenId.orEmpty()) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(if (initial == null) "添加 QQ 群目标" else "编辑 QQ 群目标") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    "请在 QQ 开放平台创建官方机器人，并将机器人加入目标群。群 OpenID 是机器人专属标识，不是普通群号。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = AutoSendColors.muted
+                )
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    label = { Text("目标名称") },
+                    singleLine = true
+                )
+                OutlinedTextField(
+                    value = appId,
+                    onValueChange = { appId = it },
+                    label = { Text("AppID") },
+                    singleLine = true
+                )
+                OutlinedTextField(
+                    value = clientSecret,
+                    onValueChange = { clientSecret = it },
+                    label = { Text("AppSecret") },
+                    visualTransformation = PasswordVisualTransformation(),
+                    singleLine = true
+                )
+                OutlinedTextField(
+                    value = groupOpenId,
+                    onValueChange = { groupOpenId = it },
+                    label = { Text("群 OpenID") },
+                    singleLine = true
+                )
+                Text(
+                    "密钥只保存在本机配置中；QQ 官方更建议由服务端调用接口，个人自用时请勿分享导出文件。",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = AutoSendColors.warning
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    onConfirm(
+                        name.trim(),
+                        appId.trim(),
+                        clientSecret.trim(),
+                        groupOpenId.trim()
+                    )
+                },
+                enabled = name.isNotBlank() && appId.isNotBlank() &&
+                    clientSecret.isNotBlank() && groupOpenId.isNotBlank()
+            ) { Text(if (initial == null) "添加" else "保存") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } }
+    )
 }
 
 @Composable
@@ -520,6 +730,23 @@ private fun SettingsTab(
             .verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = AutoSendColors.blueTint),
+            shape = RoundedCornerShape(20.dp),
+            border = BorderStroke(1.dp, AutoSendColors.line),
+            elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+        ) {
+            Column(Modifier.padding(16.dp)) {
+                Text("飞书通道已停用", style = MaterialTheme.typography.titleMedium)
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    "原有飞书配置和历史任务仍会保留，但不会显示在日常任务列表中，也不会被调度发送。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = AutoSendColors.muted
+                )
+            }
+        }
         PermissionGuideCard(context)
         Card(
             modifier = Modifier.fillMaxWidth(),

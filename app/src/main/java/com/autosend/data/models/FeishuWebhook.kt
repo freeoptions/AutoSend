@@ -15,5 +15,6 @@ data class FeishuWebhook(
 /** Telegram 仅保留用于读取旧数据库记录，当前应用只创建和调度飞书任务。 */
 enum class DeliveryChannel {
     TELEGRAM,
-    FEISHU
+    FEISHU,
+    QQ
 }

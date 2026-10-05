@@ -10,6 +10,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 import com.autosend.data.models.Bot
 import com.autosend.data.models.Chat
 import com.autosend.data.models.FeishuWebhook
+import com.autosend.data.models.QqBot
 import com.autosend.data.models.ScheduledTask
 import com.autosend.data.models.TaskLog
 
@@ -18,10 +19,11 @@ import com.autosend.data.models.TaskLog
         Bot::class,
         Chat::class,
         FeishuWebhook::class,
+        QqBot::class,
         ScheduledTask::class,
         TaskLog::class
     ],
-    version = 12,
+    version = 13,
     exportSchema = false
 )
 @TypeConverters(Converters::class)
@@ -45,7 +47,8 @@ abstract class AppDatabase : RoomDatabase() {
                     MIGRATION_8_9,
                     MIGRATION_9_10,
                     MIGRATION_10_11,
-                    MIGRATION_11_12
+                    MIGRATION_11_12,
+                    MIGRATION_12_13
                 )
                 .fallbackToDestructiveMigration()
                 .build()
@@ -174,6 +177,71 @@ abstract class AppDatabase : RoomDatabase() {
                 database.execSQL(
                     "UPDATE task_logs SET isRead = 1 WHERE status != 'SYSTEM'"
                 )
+            }
+        }
+
+        private val MIGRATION_12_13 = object : Migration(12, 13) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS qq_bots (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        name TEXT NOT NULL,
+                        appId TEXT NOT NULL,
+                        clientSecret TEXT NOT NULL,
+                        groupOpenId TEXT NOT NULL
+                    )
+                    """.trimIndent()
+                )
+                database.execSQL(
+                    """
+                    CREATE TABLE scheduled_tasks_new (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        deliveryChannel TEXT NOT NULL DEFAULT 'TELEGRAM',
+                        botId INTEGER,
+                        chatId INTEGER,
+                        feishuWebhookId INTEGER,
+                        qqBotId INTEGER,
+                        content TEXT NOT NULL,
+                        parseMode TEXT NOT NULL DEFAULT 'NONE',
+                        scheduledTime INTEGER NOT NULL,
+                        status TEXT NOT NULL,
+                        retryCount INTEGER NOT NULL,
+                        lastError TEXT,
+                        isEnabled INTEGER NOT NULL,
+                        cronExpression TEXT,
+                        lunarMonth INTEGER,
+                        lunarDay INTEGER,
+                        lunarLeapMonth INTEGER NOT NULL DEFAULT 0,
+                        FOREIGN KEY(botId) REFERENCES bots(id) ON UPDATE NO ACTION ON DELETE CASCADE,
+                        FOREIGN KEY(chatId) REFERENCES chats(id) ON UPDATE NO ACTION ON DELETE CASCADE,
+                        FOREIGN KEY(feishuWebhookId) REFERENCES feishu_webhooks(id) ON UPDATE NO ACTION ON DELETE CASCADE,
+                        FOREIGN KEY(qqBotId) REFERENCES qq_bots(id) ON UPDATE NO ACTION ON DELETE CASCADE
+                    )
+                    """.trimIndent()
+                )
+                database.execSQL(
+                    """
+                    INSERT INTO scheduled_tasks_new (
+                        id, deliveryChannel, botId, chatId, feishuWebhookId, qqBotId,
+                        content, parseMode, scheduledTime, status, retryCount, lastError,
+                        isEnabled, cronExpression, lunarMonth, lunarDay, lunarLeapMonth
+                    )
+                    SELECT
+                        id, deliveryChannel, botId, chatId, feishuWebhookId, NULL,
+                        content, parseMode, scheduledTime, status, retryCount, lastError,
+                        isEnabled, cronExpression, lunarMonth, lunarDay, lunarLeapMonth
+                    FROM scheduled_tasks
+                    """.trimIndent()
+                )
+                database.execSQL("DROP TABLE scheduled_tasks")
+                database.execSQL("ALTER TABLE scheduled_tasks_new RENAME TO scheduled_tasks")
+                database.execSQL("CREATE INDEX index_scheduled_tasks_botId ON scheduled_tasks(botId)")
+                database.execSQL("CREATE INDEX index_scheduled_tasks_chatId ON scheduled_tasks(chatId)")
+                database.execSQL(
+                    "CREATE INDEX index_scheduled_tasks_feishuWebhookId ON scheduled_tasks(feishuWebhookId)"
+                )
+                database.execSQL("CREATE INDEX index_scheduled_tasks_qqBotId ON scheduled_tasks(qqBotId)")
             }
         }
     }

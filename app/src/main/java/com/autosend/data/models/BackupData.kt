@@ -9,6 +9,8 @@ data class BackupData(
     val chats: List<ChatBackup>,
     @SerializedName("feishuWebhooks")
     val feishuWebhooks: List<FeishuWebhookBackup>? = emptyList(),
+    @SerializedName("qqBots")
+    val qqBots: List<QqBotBackup>? = emptyList(),
     @SerializedName("tasks")
     val tasks: List<TaskBackup>
 )
@@ -29,11 +31,19 @@ data class FeishuWebhookBackup(
     val secret: String? = null
 )
 
+data class QqBotBackup(
+    val name: String,
+    val appId: String,
+    val clientSecret: String,
+    val groupOpenId: String
+)
+
 data class TaskBackup(
     val botName: String,
     val chatName: String,
     val deliveryChannel: String? = null,
     val feishuWebhookName: String? = null,
+    val qqBotName: String? = null,
     val content: String,
     val parseMode: String? = null,
     val scheduledTime: Long,

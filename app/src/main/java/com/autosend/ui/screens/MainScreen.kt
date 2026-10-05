@@ -82,7 +82,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.autosend.data.models.FeishuWebhook
+import com.autosend.data.models.DeliveryChannel
+import com.autosend.data.models.DeliveryTarget
 import com.autosend.data.models.LogStatus
 import com.autosend.data.models.ScheduledTask
 import com.autosend.data.models.TaskLog
@@ -166,9 +167,19 @@ private val LUNAR_DAY_NAMES = listOf(
 private enum class TaskBoardFilter(val title: String) {
     ALL("全部任务"),
     THIS_MONTH("本月触发"),
-    NEXT_TRIGGER("下次触发"),
     ENABLED("启用"),
     DISABLED("禁用")
+}
+
+private fun targetKey(target: DeliveryTarget): String = "${target.channel.name}:${target.id}"
+
+private fun targetKey(task: ScheduledTask): String {
+    val id = when (task.deliveryChannel) {
+        DeliveryChannel.QQ -> task.qqBotId
+        DeliveryChannel.FEISHU -> task.feishuWebhookId
+        DeliveryChannel.TELEGRAM -> task.chatId
+    }
+    return "${task.deliveryChannel.name}:${id ?: 0L}"
 }
 
 private fun formatLunarDate(date: LunarDate): String {
@@ -191,7 +202,7 @@ fun MainScreen(
     onNavigateToLogs: () -> Unit
 ) {
     val allTasks by viewModel.allTasks.collectAsState()
-    val feishuWebhooks by viewModel.feishuWebhooks.collectAsState()
+    val targets by viewModel.deliveryTargets.collectAsState()
     val logs by viewModel.logs.collectAsState()
     val scope = rememberCoroutineScope()
     val latestLogByTaskId = remember(logs) {
@@ -201,11 +212,11 @@ fun MainScreen(
     val unreadResultCount = remember(logs) {
         logs.count { it.isUnreadResult() }
     }
-    val pagerState = rememberPagerState(pageCount = { feishuWebhooks.size.coerceAtLeast(1) })
+    val pagerState = rememberPagerState(pageCount = { targets.size.coerceAtLeast(1) })
 
-    LaunchedEffect(feishuWebhooks.size) {
-        if (feishuWebhooks.isNotEmpty() && pagerState.currentPage > feishuWebhooks.lastIndex) {
-            pagerState.scrollToPage(feishuWebhooks.lastIndex)
+    LaunchedEffect(targets.size) {
+        if (targets.isNotEmpty() && pagerState.currentPage > targets.lastIndex) {
+            pagerState.scrollToPage(targets.lastIndex)
         }
     }
 
@@ -219,14 +230,14 @@ fun MainScreen(
     val taskFilter = TaskBoardFilter.values()[
         selectedTaskFilterIndex.coerceIn(0, TaskBoardFilter.values().lastIndex)
     ]
-    val webhookNames = remember(feishuWebhooks) {
-        feishuWebhooks.associate { it.id to it.name }
+    val targetNames = remember(targets) {
+        targets.associate { target -> targetKey(target) to target.name }
     }
-    val taskSearchIndex = remember(allTasks, webhookNames) {
+    val taskSearchIndex = remember(allTasks, targetNames) {
         allTasks.associate { task ->
             task.id to PinyinUtils.buildSearchIndex(
                 task.content,
-                webhookNames[task.feishuWebhookId]
+                targetNames[targetKey(task)]
             )
         }
     }
@@ -323,17 +334,17 @@ fun MainScreen(
                 .fillMaxSize()
                 .padding(padding)
         ) {
-            if (feishuWebhooks.isEmpty()) {
+            if (targets.isEmpty()) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Text(
-                            "还没有飞书发送目标",
+                            "还没有发送目标",
                             style = MaterialTheme.typography.titleMedium,
                             color = AutoSendColors.ink
                         )
                         Spacer(Modifier.height(8.dp))
                         Text(
-                            "先添加 Webhook，再创建定时任务",
+                            "先添加 QQ 群目标，再创建定时任务",
                             style = MaterialTheme.typography.bodySmall,
                             color = AutoSendColors.muted
                         )
@@ -347,8 +358,8 @@ fun MainScreen(
             } else {
                 OverviewHeader(
                     nextTask = nextTask,
-                    targetName = if (feishuWebhooks.size > 1) {
-                        nextTask?.feishuWebhookId?.let(webhookNames::get)
+                targetName = if (targets.size > 1) {
+                        nextTask?.let { targetNames[targetKey(it)] }
                     } else {
                         null
                     }
@@ -359,8 +370,8 @@ fun MainScreen(
                     selectedFilterIndex = selectedTaskFilterIndex,
                     onFilterChange = { selectedTaskFilterIndex = it }
                 )
-                val currentPage = pagerState.currentPage.coerceIn(0, feishuWebhooks.lastIndex)
-                if (feishuWebhooks.size > 1) {
+                val currentPage = pagerState.currentPage.coerceIn(0, targets.lastIndex)
+                if (targets.size > 1) {
                     ScrollableTabRow(
                         selectedTabIndex = currentPage,
                         edgePadding = 20.dp,
@@ -368,13 +379,13 @@ fun MainScreen(
                         contentColor = AutoSendColors.blue,
                         divider = {}
                     ) {
-                        feishuWebhooks.forEachIndexed { index, webhook ->
+                        targets.forEachIndexed { index, target ->
                             Tab(
                                 selected = currentPage == index,
                                 onClick = { scope.launch { pagerState.animateScrollToPage(index) } },
                                 text = {
                                     Text(
-                                        webhook.name,
+                                        target.name,
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis
                                     )
@@ -389,11 +400,11 @@ fun MainScreen(
                         .fillMaxWidth()
                         .weight(1f),
                     verticalAlignment = Alignment.Top,
-                    key = { page -> feishuWebhooks.getOrNull(page)?.id ?: page }
+                    key = { page -> targets.getOrNull(page)?.let { targetKey(it) } ?: page }
                 ) { page ->
-                    FeishuTaskPage(
-                        webhook = feishuWebhooks[page],
-                        showTargetHeader = feishuWebhooks.size > 1,
+                    TargetTaskPage(
+                        target = targets[page],
+                        showTargetHeader = targets.size > 1,
                         allTasks = allTasks,
                         latestLogByTaskId = latestLogByTaskId,
                         searchQuery = taskSearchQuery,
@@ -410,12 +421,12 @@ fun MainScreen(
 
         if (showCreateDialog) {
             TaskCreationDialog(
-                feishuWebhooks = feishuWebhooks,
-                initialFeishuWebhookId = feishuWebhooks.getOrNull(pagerState.currentPage)?.id,
+                targets = targets,
+                initialTarget = targets.getOrNull(pagerState.currentPage),
                 onDismiss = { showCreateDialog = false },
-                onConfirm = { webhookId, content, time, cron, lunarMonth, lunarDay, lunarLeapMonth ->
+                onConfirm = { target, content, time, cron, lunarMonth, lunarDay, lunarLeapMonth ->
                     viewModel.createTask(
-                        webhookId,
+                        target,
                         content,
                         time,
                         cron,
@@ -430,16 +441,18 @@ fun MainScreen(
 
         editingTask?.let { task ->
             TaskCreationDialog(
-                feishuWebhooks = feishuWebhooks,
+                targets = targets,
                 editingTask = task,
+                initialTarget = targets.firstOrNull { it.matches(task) },
                 onDismiss = { editingTask = null },
-                onConfirm = { webhookId, content, time, cron, lunarMonth, lunarDay, lunarLeapMonth ->
+                onConfirm = { target, content, time, cron, lunarMonth, lunarDay, lunarLeapMonth ->
                     viewModel.updateTask(
                         task.copy(
-                            deliveryChannel = com.autosend.data.models.DeliveryChannel.FEISHU,
+                            deliveryChannel = target.channel,
                             botId = null,
                             chatId = null,
-                            feishuWebhookId = webhookId,
+                            feishuWebhookId = target.id.takeIf { target.channel == DeliveryChannel.FEISHU },
+                            qqBotId = target.id.takeIf { target.channel == DeliveryChannel.QQ },
                             content = content,
                             parseMode = com.autosend.data.models.MessageParseMode.NONE,
                             scheduledTime = time,
@@ -711,8 +724,8 @@ private fun TaskBoardControls(
 }
 
 @Composable
-private fun FeishuTaskPage(
-    webhook: FeishuWebhook,
+private fun TargetTaskPage(
+    target: DeliveryTarget,
     showTargetHeader: Boolean,
     allTasks: List<ScheduledTask>,
     latestLogByTaskId: Map<Long, TaskLog?>,
@@ -724,9 +737,9 @@ private fun FeishuTaskPage(
     onDelete: (ScheduledTask) -> Unit,
     onSendNow: (ScheduledTask) -> Unit
 ) {
-    val tasks = remember(allTasks, webhook.id) {
+    val tasks = remember(allTasks, target) {
         allTasks
-            .filter { it.feishuWebhookId == webhook.id }
+            .filter(target::matches)
             .sortedWith(compareBy<ScheduledTask> { it.scheduledTime }.thenBy { it.id })
     }
     Column(Modifier.fillMaxSize()) {
@@ -751,12 +764,12 @@ private fun FeishuTaskPage(
                 Spacer(Modifier.width(12.dp))
                 Column {
                     Text(
-                        "飞书通知",
+                        target.channelName,
                         style = MaterialTheme.typography.labelSmall,
                         color = AutoSendColors.blue
                     )
                     Text(
-                        webhook.name,
+                        target.name,
                         style = MaterialTheme.typography.bodyLarge,
                         fontWeight = FontWeight.Bold,
                         color = AutoSendColors.ink
@@ -772,7 +785,7 @@ private fun FeishuTaskPage(
             taskFilter = taskFilter,
             taskSearchIndex = taskSearchIndex,
             targetName = if (showTargetHeader) {
-                { _: ScheduledTask -> webhook.name }
+                { _: ScheduledTask -> target.name }
             } else {
                 null
             },
@@ -888,14 +901,6 @@ private fun applyTaskFilter(tasks: List<ScheduledTask>, filter: TaskBoardFilter)
                     it.scheduledTime > now &&
                     it.scheduledTime in monthStart.timeInMillis until nextMonthStart
             }
-        }
-        TaskBoardFilter.NEXT_TRIGGER -> {
-            val candidates = tasks.filter { it.isEnabled && it.scheduledTime > 0L }
-            val nextTime = candidates
-                .filter { it.scheduledTime > now }
-                .minOfOrNull { it.scheduledTime }
-                ?: candidates.minOfOrNull { it.scheduledTime }
-            if (nextTime == null) emptyList() else candidates.filter { it.scheduledTime == nextTime }
         }
         TaskBoardFilter.ENABLED -> tasks.filter { it.isEnabled }
         TaskBoardFilter.DISABLED -> tasks.filter { !it.isEnabled }

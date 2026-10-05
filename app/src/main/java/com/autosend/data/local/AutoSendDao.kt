@@ -6,6 +6,7 @@ import com.autosend.data.models.Chat
 import com.autosend.data.models.ScheduledTask
 import com.autosend.data.models.TaskLog
 import com.autosend.data.models.FeishuWebhook
+import com.autosend.data.models.QqBot
 import kotlinx.coroutines.flow.Flow
 
 @Dao
@@ -67,6 +68,25 @@ interface AutoSendDao {
     @Query("SELECT * FROM feishu_webhooks WHERE webhookUrl = :webhookUrl LIMIT 1")
     suspend fun getFeishuWebhookByUrl(webhookUrl: String): FeishuWebhook?
 
+    // QQ official bot operations
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertQqBot(bot: QqBot): Long
+
+    @Update
+    suspend fun updateQqBot(bot: QqBot)
+
+    @Delete
+    suspend fun deleteQqBot(bot: QqBot)
+
+    @Query("SELECT * FROM qq_bots ORDER BY id ASC")
+    fun getAllQqBots(): Flow<List<QqBot>>
+
+    @Query("SELECT * FROM qq_bots WHERE id = :id")
+    suspend fun getQqBotById(id: Long): QqBot?
+
+    @Query("SELECT * FROM qq_bots WHERE appId = :appId AND groupOpenId = :groupOpenId LIMIT 1")
+    suspend fun getQqBotByTarget(appId: String, groupOpenId: String): QqBot?
+
     // ScheduledTask operations
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertTask(task: ScheduledTask): Long
@@ -90,6 +110,7 @@ interface AutoSendDao {
           AND ((:chatId IS NULL AND chatId IS NULL) OR chatId = :chatId)
           AND deliveryChannel = :deliveryChannel
           AND ((:feishuWebhookId IS NULL AND feishuWebhookId IS NULL) OR feishuWebhookId = :feishuWebhookId)
+          AND ((:qqBotId IS NULL AND qqBotId IS NULL) OR qqBotId = :qqBotId)
           AND content = :content
           AND parseMode = :parseMode
           AND isEnabled = :isEnabled
@@ -128,6 +149,7 @@ interface AutoSendDao {
         botId: Long?,
         chatId: Long?,
         feishuWebhookId: Long?,
+        qqBotId: Long?,
         content: String,
         parseMode: String,
         scheduledTime: Long,

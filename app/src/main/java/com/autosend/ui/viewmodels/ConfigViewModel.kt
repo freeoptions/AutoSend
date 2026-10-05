@@ -9,6 +9,8 @@ import com.autosend.data.models.BackupData
 import com.autosend.data.models.DeliveryChannel
 import com.autosend.data.models.FeishuWebhook
 import com.autosend.data.models.FeishuWebhookBackup
+import com.autosend.data.models.QqBot
+import com.autosend.data.models.QqBotBackup
 import com.autosend.data.models.MessageParseMode
 import com.autosend.data.models.ScheduledTask
 import com.autosend.data.models.TaskBackup
@@ -46,6 +48,10 @@ class ConfigViewModel @Inject constructor(
 
     val feishuWebhooks: kotlinx.coroutines.flow.StateFlow<List<FeishuWebhook>> =
         repository.getAllFeishuWebhooks()
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val qqBots: kotlinx.coroutines.flow.StateFlow<List<QqBot>> =
+        repository.getAllQqBots()
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     fun saveExportUri(uri: String?) {
@@ -94,22 +100,36 @@ class ConfigViewModel @Inject constructor(
     fun exportData(onComplete: (String) -> Unit) {
         viewModelScope.launch {
             val webhooks = repository.getAllFeishuWebhooks().first()
+            val qqBots = repository.getAllQqBots().first()
             val tasks = repository.getAllTasks().first()
-                .filter { it.deliveryChannel == DeliveryChannel.FEISHU }
+                .filter {
+                    it.deliveryChannel == DeliveryChannel.FEISHU ||
+                        it.deliveryChannel == DeliveryChannel.QQ
+                }
             val backup = BackupData(
                 bots = emptyList(),
                 chats = emptyList(),
                 feishuWebhooks = webhooks.map {
                     FeishuWebhookBackup(it.name, it.webhookUrl, it.secret)
                 },
+                qqBots = qqBots.map {
+                    QqBotBackup(it.name, it.appId, it.clientSecret, it.groupOpenId)
+                },
                 tasks = tasks.map { task ->
                     TaskBackup(
                         botName = "",
                         chatName = "",
-                        deliveryChannel = DeliveryChannel.FEISHU.name,
-                        feishuWebhookName = webhooks
-                            .find { it.id == task.feishuWebhookId }
-                            ?.name,
+                        deliveryChannel = task.deliveryChannel.name,
+                        feishuWebhookName = if (task.deliveryChannel == DeliveryChannel.FEISHU) {
+                            webhooks.find { it.id == task.feishuWebhookId }?.name
+                        } else {
+                            null
+                        },
+                        qqBotName = if (task.deliveryChannel == DeliveryChannel.QQ) {
+                            qqBots.find { it.id == task.qqBotId }?.name
+                        } else {
+                            null
+                        },
                         content = task.content,
                         parseMode = MessageParseMode.NONE.name,
                         scheduledTime = task.scheduledTime,
@@ -151,19 +171,56 @@ class ConfigViewModel @Inject constructor(
                     webhookMap[normalizedName] = id
                 }
 
+                val qqBotMap = mutableMapOf<String, Long>()
+                var skippedQqBotCount = 0
+                backup.qqBots.orEmpty().forEach { botBackup ->
+                    val normalizedName = botBackup.name.trim()
+                    val normalizedAppId = botBackup.appId.trim()
+                    val normalizedSecret = botBackup.clientSecret.trim()
+                    val normalizedGroupOpenId = botBackup.groupOpenId.trim()
+                    val normalizedBot = QqBot(
+                        name = normalizedName,
+                        appId = normalizedAppId,
+                        clientSecret = normalizedSecret,
+                        groupOpenId = normalizedGroupOpenId
+                    )
+                    if (repository.validateQqBot(normalizedBot) != null) {
+                        skippedQqBotCount++
+                        return@forEach
+                    }
+                    val existing = repository.getQqBotByTarget(normalizedAppId, normalizedGroupOpenId)
+                    val id = existing?.id ?: repository.insertQqBot(normalizedBot)
+                    qqBotMap[normalizedName] = id
+                }
+
                 val now = System.currentTimeMillis()
-                var skippedNonFeishuTaskCount = 0
+                var skippedUnsupportedTaskCount = 0
                 var skippedTaskCount = 0
                 var duplicateTaskCount = 0
                 backup.tasks.forEach { taskBackup ->
-                    if (taskBackup.deliveryChannel?.uppercase(Locale.ROOT) != DeliveryChannel.FEISHU.name) {
-                        skippedNonFeishuTaskCount++
+                    val channel = when (taskBackup.deliveryChannel?.uppercase(Locale.ROOT)) {
+                        DeliveryChannel.FEISHU.name -> DeliveryChannel.FEISHU
+                        DeliveryChannel.QQ.name -> DeliveryChannel.QQ
+                        else -> null
+                    }
+                    if (channel == null) {
+                        skippedUnsupportedTaskCount++
                         return@forEach
                     }
-                    val webhookId = taskBackup.feishuWebhookName
-                        ?.trim()
-                        ?.let { webhookMap[it] }
-                    if (webhookId == null) {
+
+                    val webhookId = if (channel == DeliveryChannel.FEISHU) {
+                        taskBackup.feishuWebhookName?.trim()?.let { webhookMap[it] }
+                    } else {
+                        null
+                    }
+                    val qqBotId = if (channel == DeliveryChannel.QQ) {
+                        taskBackup.qqBotName?.trim()?.let { qqBotMap[it] }
+                    } else {
+                        null
+                    }
+                    if ((channel == DeliveryChannel.FEISHU && webhookId == null) ||
+                        (channel == DeliveryChannel.QQ && qqBotId == null)
+                    ) {
                         skippedTaskCount++
                         return@forEach
                     }
@@ -184,10 +241,11 @@ class ConfigViewModel @Inject constructor(
 
                     val timeSeed = taskBackup.scheduledTime.takeIf { it > 0L } ?: now
                     val importedTask = ScheduledTask(
-                        deliveryChannel = DeliveryChannel.FEISHU,
+                        deliveryChannel = channel,
                         botId = null,
                         chatId = null,
                         feishuWebhookId = webhookId,
+                        qqBotId = qqBotId,
                         content = taskBackup.content,
                         parseMode = MessageParseMode.NONE,
                         scheduledTime = timeSeed,
@@ -210,10 +268,11 @@ class ConfigViewModel @Inject constructor(
                     }
 
                     val duplicateTask = repository.findDuplicateTask(
-                        deliveryChannel = DeliveryChannel.FEISHU,
+                        deliveryChannel = channel,
                         botId = null,
                         chatId = null,
                         feishuWebhookId = webhookId,
+                        qqBotId = qqBotId,
                         content = taskBackup.content,
                         parseMode = MessageParseMode.NONE.name,
                         scheduledTime = scheduledTime,
@@ -231,12 +290,15 @@ class ConfigViewModel @Inject constructor(
                     repository.insertTask(importedTask.copy(scheduledTime = scheduledTime))
                 }
 
+                val migratedCount = repository.migrateFeishuTasksToSingleQqBot()
                 val message = buildString {
                     append("导入成功")
                     if (skippedWebhookCount > 0) append("，已跳过 $skippedWebhookCount 条无效飞书 Webhook")
-                    if (skippedNonFeishuTaskCount > 0) append("，已跳过 $skippedNonFeishuTaskCount 条非飞书任务")
+                    if (skippedQqBotCount > 0) append("，已跳过 $skippedQqBotCount 条无效 QQ 机器人")
+                    if (skippedUnsupportedTaskCount > 0) append("，已跳过 $skippedUnsupportedTaskCount 条不支持的任务")
                     if (skippedTaskCount > 0) append("，已跳过 $skippedTaskCount 条目标或时间无效的任务")
                     if (duplicateTaskCount > 0) append("，已跳过 $duplicateTaskCount 条重复任务")
+                    if (migratedCount > 0) append("，已将 $migratedCount 条飞书任务迁移到 QQ")
                 }
                 SchedulerRecovery.recoverEnabledTasks(context, repository)
                 onComplete(true, message)
@@ -324,6 +386,96 @@ class ConfigViewModel @Inject constructor(
                 result.fold(
                     onSuccess = { "飞书测试消息已发送" },
                     onFailure = { "飞书测试失败：${it.message ?: "未知错误"}" }
+                )
+            )
+        }
+    }
+
+    fun addQqBot(
+        name: String,
+        appId: String,
+        clientSecret: String,
+        groupOpenId: String,
+        onComplete: (Boolean, String) -> Unit
+    ) {
+        viewModelScope.launch {
+            val bot = QqBot(
+                name = name.trim(),
+                appId = appId.trim(),
+                clientSecret = clientSecret.trim(),
+                groupOpenId = groupOpenId.trim()
+            )
+            repository.validateQqBot(bot)?.let {
+                onComplete(false, it)
+                return@launch
+            }
+            if (repository.getQqBotByTarget(bot.appId, bot.groupOpenId) != null) {
+                onComplete(false, "该 QQ 机器人和群目标已存在，不能重复添加")
+                return@launch
+            }
+            repository.insertQqBot(bot)
+            val migratedCount = repository.migrateFeishuTasksToSingleQqBot()
+            SchedulerRecovery.recoverEnabledTasks(context, repository)
+            onComplete(
+                true,
+                if (migratedCount > 0) {
+                    "QQ 群目标已添加，已迁移 $migratedCount 条飞书任务"
+                } else {
+                    "QQ 群目标已添加"
+                }
+            )
+        }
+    }
+
+    fun updateQqBot(
+        bot: QqBot,
+        onComplete: (Boolean, String) -> Unit
+    ) {
+        viewModelScope.launch {
+            val normalizedBot = bot.copy(
+                name = bot.name.trim(),
+                appId = bot.appId.trim(),
+                clientSecret = bot.clientSecret.trim(),
+                groupOpenId = bot.groupOpenId.trim()
+            )
+            repository.validateQqBot(normalizedBot)?.let {
+                onComplete(false, it)
+                return@launch
+            }
+            val duplicate = repository.getQqBotByTarget(
+                normalizedBot.appId,
+                normalizedBot.groupOpenId
+            )
+            if (duplicate != null && duplicate.id != normalizedBot.id) {
+                onComplete(false, "该 QQ 机器人和群目标已存在，不能重复保存")
+                return@launch
+            }
+            repository.updateQqBot(normalizedBot)
+            val migratedCount = repository.migrateFeishuTasksToSingleQqBot()
+            SchedulerRecovery.recoverEnabledTasks(context, repository)
+            onComplete(
+                true,
+                if (migratedCount > 0) {
+                    "QQ 群目标已保存，已迁移 $migratedCount 条飞书任务"
+                } else {
+                    "QQ 群目标已保存"
+                }
+            )
+        }
+    }
+
+    fun deleteQqBot(bot: QqBot) {
+        viewModelScope.launch { repository.deleteQqBot(bot) }
+    }
+
+    fun testQqBot(bot: QqBot, onComplete: (Boolean, String) -> Unit) {
+        viewModelScope.launch {
+            val result = repository.testQqBot(bot)
+            onComplete(
+                result.isSuccess,
+                result.fold(
+                    onSuccess = { "QQ 测试消息已发送" },
+                    onFailure = { "QQ 测试失败：${it.message ?: "未知错误"}" }
                 )
             )
         }

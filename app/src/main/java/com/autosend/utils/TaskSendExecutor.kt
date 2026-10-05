@@ -2,7 +2,6 @@ package com.autosend.utils
 
 import android.content.Context
 import com.autosend.data.models.LogStatus
-import com.autosend.data.models.DeliveryChannel
 import com.autosend.data.models.ScheduledTask
 import com.autosend.data.models.TaskLog
 import com.autosend.data.models.TaskStatus
@@ -37,7 +36,9 @@ class TaskSendExecutor @Inject constructor(
         forceExecution: Boolean
     ): TaskSendOutcome {
         val task = repository.getTaskById(taskId) ?: return TaskSendOutcome.SKIPPED
-        if (task.deliveryChannel != DeliveryChannel.FEISHU) return TaskSendOutcome.SKIPPED
+        if (!DeliveryChannelPolicy.isEnabled(task.deliveryChannel)) {
+            return TaskSendOutcome.SKIPPED
+        }
         if (forceExecution) {
             return if (task.isEnabled) {
                 executeRecurringRetry(task, triggerAtMillis)

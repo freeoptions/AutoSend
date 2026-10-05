@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.autosend.data.models.DeliveryChannel
+import com.autosend.data.models.DeliveryTarget
 import com.autosend.data.models.LogStatus
 import com.autosend.data.models.MessageParseMode
 import com.autosend.data.models.ScheduledTask
@@ -11,6 +12,7 @@ import com.autosend.data.models.TaskLog
 import com.autosend.data.models.TaskStatus
 import com.autosend.data.repository.TelegramRepository
 import com.autosend.utils.ExitReasonTracker
+import com.autosend.utils.DeliveryChannelPolicy
 import com.autosend.utils.RecurringScheduleUtils
 import com.autosend.utils.SchedulerRecovery
 import com.autosend.utils.WorkManagerHelper
@@ -18,6 +20,7 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -31,18 +34,26 @@ class MainViewModel @Inject constructor(
     init {
         viewModelScope.launch {
             ExitReasonTracker.recordLatestExitIfNeeded(context, repository)
+            repository.migrateFeishuTasksToSingleQqBot()
             SchedulerRecovery.recoverEnabledTasks(context, repository)
         }
     }
 
     val allTasks: StateFlow<List<ScheduledTask>> = repository.getAllTasks()
-        .map { tasks -> tasks.filter { it.deliveryChannel == DeliveryChannel.FEISHU } }
+        .map { tasks -> tasks.filter { DeliveryChannelPolicy.isEnabled(it.deliveryChannel) } }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    val feishuWebhooks = repository.getAllFeishuWebhooks()
+    val qqBots = repository.getAllQqBots()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    val logs: StateFlow<List<TaskLog>> = repository.getAllLogs()
+    val deliveryTargets: StateFlow<List<DeliveryTarget>> = qqBots
+        .map { bots -> bots.map { DeliveryTarget(DeliveryChannel.QQ, it.id, it.name) } }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val logs: StateFlow<List<TaskLog>> = combine(repository.getAllLogs(), allTasks) { logs, tasks ->
+        val visibleTaskIds = tasks.mapTo(HashSet<Long>()) { it.id }
+        logs.filter { it.taskId in visibleTaskIds }
+    }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     fun clearLogs() {
@@ -54,7 +65,7 @@ class MainViewModel @Inject constructor(
     }
 
     fun createTask(
-        feishuWebhookId: Long,
+        target: DeliveryTarget,
         content: String,
         scheduledTime: Long,
         cronExpression: String? = null,
@@ -64,8 +75,9 @@ class MainViewModel @Inject constructor(
     ) {
         viewModelScope.launch {
             val draftTask = ScheduledTask(
-                deliveryChannel = DeliveryChannel.FEISHU,
-                feishuWebhookId = feishuWebhookId,
+                deliveryChannel = target.channel,
+                feishuWebhookId = target.id.takeIf { target.channel == DeliveryChannel.FEISHU },
+                qqBotId = target.id.takeIf { target.channel == DeliveryChannel.QQ },
                 content = content,
                 parseMode = MessageParseMode.NONE,
                 scheduledTime = scheduledTime,
@@ -112,9 +124,10 @@ class MainViewModel @Inject constructor(
     fun updateTask(task: ScheduledTask) {
         viewModelScope.launch {
             val updatedTask = task.copy(
-                deliveryChannel = DeliveryChannel.FEISHU,
-                botId = null,
-                chatId = null,
+                botId = task.botId.takeIf { task.deliveryChannel == DeliveryChannel.TELEGRAM },
+                chatId = task.chatId.takeIf { task.deliveryChannel == DeliveryChannel.TELEGRAM },
+                feishuWebhookId = task.feishuWebhookId.takeIf { task.deliveryChannel == DeliveryChannel.FEISHU },
+                qqBotId = task.qqBotId.takeIf { task.deliveryChannel == DeliveryChannel.QQ },
                 parseMode = MessageParseMode.NONE,
                 scheduledTime = normalizeScheduledTime(task)
             )
@@ -135,6 +148,7 @@ class MainViewModel @Inject constructor(
 
     fun sendTaskNow(task: ScheduledTask) {
         viewModelScope.launch {
+            if (!DeliveryChannelPolicy.isEnabled(task.deliveryChannel)) return@launch
             val result = repository.sendScheduledMessage(task.id, isManual = true)
             val target = repository.describeTaskTarget(task)
             val latestTask = repository.getTaskById(task.id) ?: task
