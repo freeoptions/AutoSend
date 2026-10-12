@@ -1,6 +1,10 @@
 package com.autosend.data.repository
 
 import com.autosend.data.local.AutoSendDao
+import com.autosend.data.local.AppDatabase
+import androidx.room.withTransaction
+import com.autosend.data.models.PendingMessage
+import com.autosend.data.models.DeliveryGate
 import com.autosend.data.models.Bot
 import com.autosend.data.models.Chat
 import com.autosend.data.models.ScheduledTask
@@ -18,6 +22,9 @@ import com.autosend.data.remote.FeishuTextContent
 import com.autosend.utils.FeishuSigner
 import com.autosend.utils.DeliveryChannelPolicy
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.CancellationException
+import com.autosend.utils.RecurringScheduleUtils
+import java.util.UUID
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.net.URI
@@ -29,7 +36,9 @@ import javax.inject.Singleton
 class TelegramRepository @Inject constructor(
     private val feishuApi: FeishuApi,
     private val qqApi: QqApi,
-    private val autoSendDao: AutoSendDao
+    private val autoSendDao: AutoSendDao,
+    private val database: AppDatabase,
+    val telegramClient: TelegramDeliveryClient
 ) {
     private val qqTokenMutex = Mutex()
     private val qqTokenCache = ConcurrentHashMap<Long, CachedQqToken>()
@@ -45,12 +54,16 @@ class TelegramRepository @Inject constructor(
         }
         return try {
             val result = when (task.deliveryChannel) {
-                DeliveryChannel.TELEGRAM -> Result.failure(Exception("Telegram 任务已停用，请改用 QQ 或飞书任务"))
+                DeliveryChannel.TELEGRAM -> {
+                    return Result.failure(Exception("Telegram 消息须通过待发队列发送"))
+                }
                 DeliveryChannel.FEISHU -> sendFeishuMessage(task)
                 DeliveryChannel.QQ -> sendQqMessage(task)
             }
             updateTaskAfterSend(task, result, updateTaskState)
             result
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             val detailedError = describeException(e)
             if (updateTaskState) {
@@ -262,11 +275,118 @@ class TelegramRepository @Inject constructor(
     }
 
     // Proxy methods for Dao
+    val queueDao: AutoSendDao get() = autoSendDao
+    fun getPendingMessages() = autoSendDao.observePendingMessages()
+    fun getPendingMessageCount() = autoSendDao.observePendingCount()
+    fun getDeliveryGates() = autoSendDao.observeDeliveryGates()
+
+    /** 触发入队与推进任务游标必须一起提交。每批有上限，剩余触发下批继续，不能跳过。 */
+    suspend fun enqueueTelegramTask(taskId: Long, manual: Boolean = false): Int = database.withTransaction {
+        var task = autoSendDao.getTaskById(taskId) ?: return@withTransaction 0
+        if (task.deliveryChannel != DeliveryChannel.TELEGRAM || (!manual && !task.isEnabled)) return@withTransaction 0
+        if (!manual && task.lastError == INVALID_TELEGRAM_SCHEDULE) return@withTransaction 0
+        val botId = task.botId ?: return@withTransaction 0
+        val chatId = task.chatId ?: return@withTransaction 0
+        val now = System.currentTimeMillis()
+        var inserted = 0
+        var processed = 0
+        while (manual || task.scheduledTime <= now) {
+            if (!manual && !RecurringScheduleUtils.isRecurring(task) && task.status == TaskStatus.SUCCESS) break
+            val message = PendingMessage(
+                occurrenceKey = if (manual) "manual:${UUID.randomUUID()}" else "${task.id}:${task.scheduledTime}",
+                taskId = task.id, botId = botId, chatId = chatId,
+                content = task.content, parseMode = task.parseMode,
+                occurrenceAt = if (manual) now else task.scheduledTime, manual = manual
+            )
+            if (autoSendDao.insertPendingMessage(message) != -1L) inserted++
+            processed++
+            if (manual || !RecurringScheduleUtils.isRecurring(task)) break
+            val next = RecurringScheduleUtils.getNextExecutionTimeFrom(task, task.scheduledTime + 1_000L)
+            if (next == null || next <= task.scheduledTime) {
+                autoSendDao.updateTask(task.copy(lastError = INVALID_TELEGRAM_SCHEDULE))
+                break
+            }
+            task = task.copy(scheduledTime = next, status = TaskStatus.PENDING, retryCount = 0, lastError = null)
+            autoSendDao.updateTask(task)
+            if (processed >= 200) break
+        }
+        inserted
+    }
+
+    suspend fun captureDueTelegramTasks(): Boolean {
+        val tasks = autoSendDao.getAllTasks().first().filter {
+            it.deliveryChannel == DeliveryChannel.TELEGRAM && it.isEnabled &&
+                it.botId != null && it.chatId != null && it.lastError != INVALID_TELEGRAM_SCHEDULE &&
+                it.scheduledTime > 0 && it.scheduledTime <= System.currentTimeMillis() &&
+                (RecurringScheduleUtils.isRecurring(it) || it.status != TaskStatus.SUCCESS)
+        }
+        tasks.forEach { enqueueTelegramTask(it.id) }
+        return autoSendDao.getAllTasks().first().any {
+            it.deliveryChannel == DeliveryChannel.TELEGRAM && it.isEnabled &&
+                it.botId != null && it.chatId != null && it.lastError != INVALID_TELEGRAM_SCHEDULE &&
+                RecurringScheduleUtils.isRecurring(it) && it.scheduledTime > 0 && it.scheduledTime <= System.currentTimeMillis()
+        }
+    }
+
+    suspend fun retryPendingMessages() = database.withTransaction {
+        autoSendDao.resetBlockedGates()
+        autoSendDao.retryBlockedMessages()
+    }
+
+    suspend fun retryPendingMessage(id: Long) = database.withTransaction {
+        val message = autoSendDao.getPendingMessage(id) ?: return@withTransaction
+        if (message.state !in listOf(PendingMessage.WAITING, PendingMessage.BLOCKED)) return@withTransaction
+        if (autoSendDao.getTaskById(message.taskId) == null) return@withTransaction
+        autoSendDao.updatePendingMessage(message.copy(state = PendingMessage.WAITING, nextAttemptAt = 0))
+        autoSendDao.resetTargetGates(message.botId, message.chatId)
+        autoSendDao.putDeliveryGate(DeliveryGate("network"))
+    }
+
+    suspend fun cancelPendingMessage(id: Long) = autoSendDao.cancelPendingMessage(id)
+    suspend fun editPendingMessage(id: Long, content: String) = autoSendDao.editPendingMessage(id, content)
+    suspend fun pauseDelivery(paused: Boolean) = autoSendDao.putDeliveryGate(
+        DeliveryGate("pause", if (paused) Long.MAX_VALUE else 0)
+    )
+
     fun getAllTasks() = autoSendDao.getAllTasks()
     fun getPendingTasks() = autoSendDao.getPendingTasks()
     suspend fun insertTask(task: ScheduledTask) = autoSendDao.insertTask(task)
     suspend fun updateTask(task: ScheduledTask) = autoSendDao.updateTask(task)
-    suspend fun deleteTask(task: ScheduledTask) = autoSendDao.deleteTask(task)
+    /** 原地改绑匹配的 QQ 任务；备份、去重与改绑原子提交，保留实时游标和执行状态。 */
+    suspend fun migrateQqTaskToTelegram(imported: ScheduledTask, sourceQqBotId: Long): Long? = database.withTransaction {
+        require(imported.deliveryChannel == DeliveryChannel.TELEGRAM)
+        val recurring = RecurringScheduleUtils.isRecurring(imported)
+        val candidates = autoSendDao.getAllTasks().first().filter { old ->
+            old.deliveryChannel == DeliveryChannel.QQ && old.qqBotId == sourceQqBotId &&
+                old.content == imported.content && old.parseMode == imported.parseMode &&
+                old.isEnabled == imported.isEnabled && old.cronExpression == imported.cronExpression &&
+                old.lunarMonth == imported.lunarMonth && old.lunarDay == imported.lunarDay &&
+                old.lunarLeapMonth == imported.lunarLeapMonth &&
+                (recurring || old.scheduledTime == imported.scheduledTime)
+        }
+        require(candidates.size <= 1) { "存在多条相同 QQ 任务，无法安全确定迁移对象，已停止导入" }
+        val source = candidates.singleOrNull() ?: return@withTransaction null
+        val duplicate = findDuplicateTask(
+            imported.deliveryChannel, imported.botId, imported.chatId, null, null,
+            imported.content, imported.parseMode.name, imported.scheduledTime, imported.isEnabled,
+            imported.cronExpression, imported.lunarMonth, imported.lunarDay, imported.lunarLeapMonth
+        )
+        val sql = database.openHelper.writableDatabase
+        sql.execSQL("CREATE TABLE IF NOT EXISTS telegram_import_qq_backup AS SELECT * FROM scheduled_tasks WHERE 0")
+        sql.execSQL("INSERT INTO telegram_import_qq_backup SELECT * FROM scheduled_tasks WHERE id = ? AND NOT EXISTS (SELECT 1 FROM telegram_import_qq_backup WHERE id = ?)", arrayOf<Any>(source.id, source.id))
+        autoSendDao.updateTask(if (duplicate != null) {
+            source.copy(isEnabled = false)
+        } else {
+            source.copy(deliveryChannel = DeliveryChannel.TELEGRAM, botId = imported.botId,
+                chatId = imported.chatId, qqBotId = null, feishuWebhookId = null)
+        })
+        source.id
+    }
+
+    suspend fun deleteTask(task: ScheduledTask) = database.withTransaction {
+        autoSendDao.preserveMessagesForDeletedTask(task.id)
+        autoSendDao.deleteTask(task)
+    }
 
     /**
      * 将历史飞书任务原地改绑到唯一的 QQ 群目标，保留任务 ID、内容、时间和重复规则。
@@ -379,6 +499,7 @@ private data class CachedQqToken(
 )
 
 private const val TOKEN_REFRESH_GUARD_MS = 60_000L
+private const val INVALID_TELEGRAM_SCHEDULE = "重复规则无法计算下次时间，本次消息已保留"
 private const val DEFAULT_TOKEN_LIFETIME_SECONDS = 7_200L
 
 data class TaskTargetDescription(

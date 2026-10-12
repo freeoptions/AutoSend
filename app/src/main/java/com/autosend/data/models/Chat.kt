@@ -10,3 +10,5 @@ data class Chat(
     val name: String,
     val chatId: String
 )
+
+data class TelegramTargetConfig(val bot: Bot, val chat: Chat)

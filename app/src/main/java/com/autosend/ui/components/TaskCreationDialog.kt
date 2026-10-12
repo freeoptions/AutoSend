@@ -26,6 +26,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -34,6 +35,7 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
@@ -51,7 +53,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
@@ -145,12 +150,11 @@ fun TaskCreationDialog(
             }
         )
     }
-    var cronParts by remember(editingTask) {
-        mutableStateOf(
-            editingTask?.cronExpression?.split(" ")?.toMutableList()
-                ?: mutableListOf("0", "0", "*", "*", "*", "*")
-        )
+    var cronInput by remember(editingTask) {
+        mutableStateOf(editingTask?.cronExpression ?: "0 0 * * * *")
     }
+    val cronInputFocusRequester = remember { FocusRequester() }
+    val keyboardController = LocalSoftwareKeyboardController.current
     var selectedPartIndex by remember(editingTask) { mutableIntStateOf(1) }
     val initialTime = editingTask?.let { Date(it.scheduledTime) }
         ?: Date(System.currentTimeMillis() + 600000)
@@ -183,11 +187,19 @@ fun TaskCreationDialog(
         mutableStateOf(SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(initialTime))
     }
 
+    val cronParts = remember(cronInput) { cronInput.trim().split(Regex("\\s+")) }
     val cronExpression = cronParts.joinToString(" ")
     val parsedTime = remember(timeString) { parseScheduleTime(timeString) }
     val isCronMode = scheduleMode == ScheduleMode.CRON
     val nextExecutionTimes = remember(cronExpression, scheduleMode) {
-        if (isCronMode) CronUtils.getNextExecutionTimes(cronExpression) else emptyList()
+        if (isCronMode && cronParts.size == 6) CronUtils.getNextExecutionTimes(cronExpression) else emptyList()
+    }
+    val cronValidationMessage = when {
+        !isCronMode -> null
+        cronInput.isBlank() -> "请输入 Cron 表达式"
+        cronParts.size != 6 -> "需要 6 段：秒 分 时 日 月 周"
+        nextExecutionTimes.isEmpty() -> "表达式无效或未来两年内没有触发时间，请检查填写内容"
+        else -> null
     }
     val lunarMonth = lunarMonthString.toIntOrNull()
     val lunarDay = lunarDayString.toIntOrNull()
@@ -311,7 +323,7 @@ fun TaskCreationDialog(
                     if (targets.isEmpty()) {
                         Spacer(Modifier.height(8.dp))
                         Text(
-                            "请先在配置管理中添加 QQ 群发送目标",
+                            "请先在配置管理中添加 Telegram 机器人和目标",
                             style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
                             color = androidx.compose.material3.MaterialTheme.colorScheme.error
                         )
@@ -386,7 +398,7 @@ fun TaskCreationDialog(
                                         .padding(vertical = 8.dp)
                                 ) {
                                     Text(
-                                        cronParts[index],
+                                        cronParts.getOrNull(index)?.takeIf { it.isNotBlank() } ?: "—",
                                         fontWeight = FontWeight.Bold,
                                         color = if (selectedPartIndex == index) {
                                             androidx.compose.material3.MaterialTheme.colorScheme.onPrimary
@@ -422,9 +434,12 @@ fun TaskCreationDialog(
                             options.forEach { option ->
                                 AssistChip(
                                     onClick = {
-                                        cronParts = cronParts.toMutableList().also {
+                                        cronInput = MutableList(6) { index ->
+                                            cronParts.getOrNull(index)?.takeIf { it.isNotBlank() }
+                                                ?: if (index == 0) "0" else "*"
+                                        }.also {
                                             it[selectedPartIndex] = option
-                                        }
+                                        }.joinToString(" ")
                                     },
                                     label = { Text(option) },
                                     modifier = Modifier.padding(end = 4.dp)
@@ -449,7 +464,7 @@ fun TaskCreationDialog(
                                 "每月最后一天 20 点" to "0 0 20 L * *"
                             ).forEach { (label, value) ->
                                 AssistChip(
-                                    onClick = { cronParts = value.split(" ").toMutableList() },
+                                    onClick = { cronInput = value },
                                     label = { Text(label, fontSize = 11.sp) },
                                     modifier = Modifier.padding(end = 4.dp)
                                 )
@@ -458,13 +473,25 @@ fun TaskCreationDialog(
 
                         Spacer(Modifier.height(12.dp))
                         OutlinedTextField(
-                            value = cronExpression,
-                            onValueChange = { value ->
-                                val parts = value.trim().split(Regex("\\s+"))
-                                if (parts.size == 6) cronParts = parts.toMutableList()
-                            },
+                            value = cronInput,
+                            onValueChange = { cronInput = it },
                             label = { Text(LABEL_CRON_RAW) },
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier.fillMaxWidth().focusRequester(cronInputFocusRequester),
+                            singleLine = true,
+                            isError = cronInput.isNotBlank() && cronValidationMessage != null,
+                            supportingText = { Text(cronValidationMessage ?: "秒 分 时 日 月 周") },
+                            trailingIcon = {
+                                if (cronInput.isNotEmpty()) {
+                                    IconButton(onClick = {
+                                        cronInput = ""
+                                        cronInputFocusRequester.requestFocus()
+                                        keyboardController?.show()
+                                    }) {
+                                        Icon(Icons.Default.Close, contentDescription = "清空 Cron 表达式",
+                                            tint = AutoSendColors.muted)
+                                    }
+                                }
+                            },
                             textStyle = androidx.compose.material3.MaterialTheme.typography.bodySmall
                         )
                         Spacer(Modifier.height(8.dp))

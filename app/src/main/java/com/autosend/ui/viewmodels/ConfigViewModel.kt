@@ -6,6 +6,12 @@ import androidx.documentfile.provider.DocumentFile
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.autosend.data.models.BackupData
+import com.autosend.data.models.Bot
+import com.autosend.data.models.Chat
+import com.autosend.data.models.BotBackup
+import com.autosend.data.models.ChatBackup
+import com.autosend.data.models.TelegramTargetConfig
+import com.autosend.utils.TelegramQueueScheduler
 import com.autosend.data.models.DeliveryChannel
 import com.autosend.data.models.FeishuWebhook
 import com.autosend.data.models.FeishuWebhookBackup
@@ -18,6 +24,7 @@ import com.autosend.data.repository.TelegramRepository
 import com.autosend.utils.RecurringScheduleUtils
 import com.autosend.utils.LunarCalendarUtils
 import com.autosend.utils.SchedulerRecovery
+import com.autosend.utils.WorkManagerHelper
 import com.google.gson.Gson
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -26,6 +33,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -45,6 +53,90 @@ class ConfigViewModel @Inject constructor(
 
     private val _exportUri = MutableStateFlow(prefs.getString(PREF_EXPORT_URI, null))
     val exportUri = _exportUri.asStateFlow()
+
+    val telegramTargets = combine(repository.getAllBots(), repository.getAllChats()) { bots, chats ->
+        bots.flatMap { bot -> chats.map { chat -> TelegramTargetConfig(bot, chat) } }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+    val pendingMessages = repository.getPendingMessages()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+    val pendingCount = repository.getPendingMessageCount()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
+    val deliveryGates = repository.getDeliveryGates()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+    val queueTasks = repository.getAllTasks()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    fun saveTelegramTarget(initial: TelegramTargetConfig?, botName: String, token: String,
+                           chatName: String, chatId: String, onComplete: (Boolean, String) -> Unit) {
+        viewModelScope.launch {
+            if (botName.isBlank() || chatName.isBlank() ||
+                !Regex("[0-9]+:[A-Za-z0-9_-]+").matches(token.trim()) ||
+                (chatId.trim().toLongOrNull()?.let { it != 0L } != true && !Regex("@[A-Za-z0-9_]+").matches(chatId.trim()))) {
+                onComplete(false, "请填写名称、有效的 Bot Token 和 Chat ID（群组 ID 通常为负数）")
+                return@launch
+            }
+            val duplicateBot = repository.getBotByToken(token.trim())
+            val duplicateChat = repository.getChatByChatId(chatId.trim())
+            if (repository.getAllBots().first().any { it.name == botName.trim() && it.id != (initial?.bot?.id ?: duplicateBot?.id) } ||
+                repository.getAllChats().first().any { it.name == chatName.trim() && it.id != (initial?.chat?.id ?: duplicateChat?.id) }) {
+                onComplete(false, "机器人名称和目标名称不能与其他配置重复")
+                return@launch
+            }
+            if (initial != null && ((duplicateBot != null && duplicateBot.id != initial.bot.id) ||
+                    (duplicateChat != null && duplicateChat.id != initial.chat.id))) {
+                onComplete(false, "该机器人或目标已存在，请编辑已有配置")
+                return@launch
+            }
+            val savedBotId: Long
+            val savedChatId: Long
+            if (initial == null) {
+                savedBotId = duplicateBot?.id ?: repository.insertBot(Bot(name = botName.trim(), token = token.trim()))
+                savedChatId = duplicateChat?.id ?: repository.insertChat(Chat(name = chatName.trim(), chatId = chatId.trim()))
+            } else {
+                repository.updateBot(initial.bot.copy(name = botName.trim(), token = token.trim()))
+                repository.updateChat(initial.chat.copy(name = chatName.trim(), chatId = chatId.trim()))
+                savedBotId = initial.bot.id
+                savedChatId = initial.chat.id
+            }
+            repository.queueDao.resetTargetGates(savedBotId, savedChatId)
+            TelegramQueueScheduler.kick(context)
+            onComplete(true, "Telegram 配置已保存")
+        }
+    }
+
+    fun deleteTelegramTarget(target: TelegramTargetConfig) {
+        viewModelScope.launch { repository.deleteChat(target.chat) }
+    }
+
+    fun testTelegramTarget(target: TelegramTargetConfig, onComplete: (Boolean, String) -> Unit) {
+        viewModelScope.launch {
+            val result = repository.telegramClient.test(target.bot.id, target.chat.id)
+            onComplete(result.isSuccess, result.fold({ "机器人与目标连接正常" }, { it.message ?: "连接测试失败" }))
+        }
+    }
+
+    fun retryQueue() { viewModelScope.launch {
+        repository.retryPendingMessages()
+        repository.pauseDelivery(false)
+        TelegramQueueScheduler.kick(context)
+    } }
+
+    fun pauseQueue(paused: Boolean) { viewModelScope.launch {
+        repository.pauseDelivery(paused)
+        if (!paused) TelegramQueueScheduler.kick(context)
+    } }
+
+    fun retryPendingMessage(id: Long) { viewModelScope.launch {
+        repository.retryPendingMessage(id)
+        TelegramQueueScheduler.kick(context)
+    } }
+
+    fun cancelPendingMessage(id: Long) { viewModelScope.launch { repository.cancelPendingMessage(id) } }
+    fun editPendingMessage(id: Long, content: String) { viewModelScope.launch {
+        repository.editPendingMessage(id, content)
+        repository.retryPendingMessage(id)
+        TelegramQueueScheduler.kick(context)
+    } }
 
     val feishuWebhooks: kotlinx.coroutines.flow.StateFlow<List<FeishuWebhook>> =
         repository.getAllFeishuWebhooks()
@@ -101,14 +193,12 @@ class ConfigViewModel @Inject constructor(
         viewModelScope.launch {
             val webhooks = repository.getAllFeishuWebhooks().first()
             val qqBots = repository.getAllQqBots().first()
+            val bots = repository.getAllBots().first()
+            val chats = repository.getAllChats().first()
             val tasks = repository.getAllTasks().first()
-                .filter {
-                    it.deliveryChannel == DeliveryChannel.FEISHU ||
-                        it.deliveryChannel == DeliveryChannel.QQ
-                }
             val backup = BackupData(
-                bots = emptyList(),
-                chats = emptyList(),
+                bots = bots.map { BotBackup(it.name, it.token) },
+                chats = chats.map { ChatBackup(it.name, it.chatId) },
                 feishuWebhooks = webhooks.map {
                     FeishuWebhookBackup(it.name, it.webhookUrl, it.secret)
                 },
@@ -117,8 +207,8 @@ class ConfigViewModel @Inject constructor(
                 },
                 tasks = tasks.map { task ->
                     TaskBackup(
-                        botName = "",
-                        chatName = "",
+                        botName = bots.find { it.id == task.botId }?.name.orEmpty(),
+                        chatName = chats.find { it.id == task.chatId }?.name.orEmpty(),
                         deliveryChannel = task.deliveryChannel.name,
                         feishuWebhookName = if (task.deliveryChannel == DeliveryChannel.FEISHU) {
                             webhooks.find { it.id == task.feishuWebhookId }?.name
@@ -131,7 +221,7 @@ class ConfigViewModel @Inject constructor(
                             null
                         },
                         content = task.content,
-                        parseMode = MessageParseMode.NONE.name,
+                        parseMode = task.parseMode.name,
                         scheduledTime = task.scheduledTime,
                         isEnabled = task.isEnabled,
                         cronExpression = task.cronExpression,
@@ -150,6 +240,33 @@ class ConfigViewModel @Inject constructor(
             try {
                 val backup = Gson().fromJson(json, BackupData::class.java)
                     ?: throw Exception("解析失败")
+
+                val botMap = mutableMapOf<String, Long>()
+                backup.bots.orEmpty().forEach { saved ->
+                    require(saved.name.isNotBlank() && Regex("[0-9]+:[A-Za-z0-9_-]+").matches(saved.token.trim())) { "Telegram 机器人配置无效" }
+                    botMap[saved.name.trim()] = repository.getBotByToken(saved.token.trim())?.id
+                        ?: repository.insertBot(Bot(name = saved.name.trim(), token = saved.token.trim()))
+                }
+                val chatMap = mutableMapOf<String, Long>()
+                backup.chats.orEmpty().forEach { saved ->
+                    require(saved.name.isNotBlank() && saved.chatId.isNotBlank()) { "Telegram 目标配置无效" }
+                    chatMap[saved.name.trim()] = repository.getChatByChatId(saved.chatId.trim())?.id
+                        ?: repository.insertChat(Chat(name = saved.name.trim(), chatId = saved.chatId.trim()))
+                }
+                // 转换后的任务 JSON 可以仅引用本机已有目标，不必再次携带 Token。
+                repository.getAllBots().first().forEach { botMap.putIfAbsent(it.name, it.id) }
+                repository.getAllChats().first().forEach { chatMap.putIfAbsent(it.name, it.id) }
+
+                backup.tasks.filter { it.migrateFromChannel != null }.forEach { task ->
+                    require(task.deliveryChannel == DeliveryChannel.TELEGRAM.name &&
+                        task.migrateFromChannel == DeliveryChannel.QQ.name) { "不支持的任务迁移方式" }
+                    require((botMap[task.botName.orEmpty().trim()] != null ||
+                        (task.botName.isNullOrBlank() && botMap.values.distinct().size == 1)) &&
+                        (chatMap[task.chatName.orEmpty().trim()] != null ||
+                        (task.chatName.isNullOrBlank() && chatMap.values.distinct().size == 1))) {
+                        "请先配置唯一的 Telegram 机器人和目标，再导入转换文件；多个目标时需填写 botName 和 chatName"
+                    }
+                }
 
                 val webhookMap = mutableMapOf<String, Long>()
                 var skippedWebhookCount = 0
@@ -192,15 +309,18 @@ class ConfigViewModel @Inject constructor(
                     val id = existing?.id ?: repository.insertQqBot(normalizedBot)
                     qqBotMap[normalizedName] = id
                 }
+                repository.getAllQqBots().first().forEach { qqBotMap.putIfAbsent(it.name, it.id) }
 
                 val now = System.currentTimeMillis()
                 var skippedUnsupportedTaskCount = 0
                 var skippedTaskCount = 0
                 var duplicateTaskCount = 0
+                var migratedTaskCount = 0
                 backup.tasks.forEach { taskBackup ->
                     val channel = when (taskBackup.deliveryChannel?.uppercase(Locale.ROOT)) {
                         DeliveryChannel.FEISHU.name -> DeliveryChannel.FEISHU
                         DeliveryChannel.QQ.name -> DeliveryChannel.QQ
+                        DeliveryChannel.TELEGRAM.name, null -> DeliveryChannel.TELEGRAM
                         else -> null
                     }
                     if (channel == null) {
@@ -218,8 +338,17 @@ class ConfigViewModel @Inject constructor(
                     } else {
                         null
                     }
+                    val botName = taskBackup.botName.orEmpty().trim()
+                    val chatName = taskBackup.chatName.orEmpty().trim()
+                    val botId = if (channel == DeliveryChannel.TELEGRAM) {
+                        botMap[botName] ?: if (botName.isBlank()) botMap.values.distinct().singleOrNull() else null
+                    } else null
+                    val chatId = if (channel == DeliveryChannel.TELEGRAM) {
+                        chatMap[chatName] ?: if (chatName.isBlank()) chatMap.values.distinct().singleOrNull() else null
+                    } else null
                     if ((channel == DeliveryChannel.FEISHU && webhookId == null) ||
-                        (channel == DeliveryChannel.QQ && qqBotId == null)
+                        (channel == DeliveryChannel.QQ && qqBotId == null) ||
+                        (channel == DeliveryChannel.TELEGRAM && (botId == null || chatId == null))
                     ) {
                         skippedTaskCount++
                         return@forEach
@@ -242,12 +371,12 @@ class ConfigViewModel @Inject constructor(
                     val timeSeed = taskBackup.scheduledTime.takeIf { it > 0L } ?: now
                     val importedTask = ScheduledTask(
                         deliveryChannel = channel,
-                        botId = null,
-                        chatId = null,
+                        botId = botId,
+                        chatId = chatId,
                         feishuWebhookId = webhookId,
                         qqBotId = qqBotId,
                         content = taskBackup.content,
-                        parseMode = MessageParseMode.NONE,
+                        parseMode = runCatching { MessageParseMode.valueOf(taskBackup.parseMode ?: "NONE") }.getOrDefault(MessageParseMode.NONE),
                         scheduledTime = timeSeed,
                         isEnabled = taskBackup.isEnabled,
                         cronExpression = cron,
@@ -256,7 +385,7 @@ class ConfigViewModel @Inject constructor(
                         lunarLeapMonth = lunarLeapMonth
                     )
                     val scheduledTime = when {
-                        RecurringScheduleUtils.isRecurring(importedTask) &&
+                        channel != DeliveryChannel.TELEGRAM && RecurringScheduleUtils.isRecurring(importedTask) &&
                             taskBackup.scheduledTime <= now ->
                             RecurringScheduleUtils.getNextExecutionTimeFrom(importedTask, now + 1_000L)
                         taskBackup.scheduledTime > 0L -> taskBackup.scheduledTime
@@ -267,14 +396,30 @@ class ConfigViewModel @Inject constructor(
                         return@forEach
                     }
 
+                    if (taskBackup.migrateFromChannel == DeliveryChannel.QQ.name) {
+                        val sourceQqBotId = taskBackup.qqBotName?.trim()?.let { qqBotMap[it] }
+                        if (sourceQqBotId == null) {
+                            skippedTaskCount++
+                            return@forEach
+                        }
+                        val migratedId = repository.migrateQqTaskToTelegram(
+                            importedTask.copy(scheduledTime = scheduledTime), sourceQqBotId
+                        )
+                        if (migratedId != null) {
+                            WorkManagerHelper.cancelTask(context, migratedId)
+                            migratedTaskCount++
+                            return@forEach
+                        }
+                    }
+
                     val duplicateTask = repository.findDuplicateTask(
                         deliveryChannel = channel,
-                        botId = null,
-                        chatId = null,
+                        botId = botId,
+                        chatId = chatId,
                         feishuWebhookId = webhookId,
                         qqBotId = qqBotId,
                         content = taskBackup.content,
-                        parseMode = MessageParseMode.NONE.name,
+                        parseMode = importedTask.parseMode.name,
                         scheduledTime = scheduledTime,
                         isEnabled = taskBackup.isEnabled,
                         cronExpression = cron,
@@ -290,15 +435,14 @@ class ConfigViewModel @Inject constructor(
                     repository.insertTask(importedTask.copy(scheduledTime = scheduledTime))
                 }
 
-                val migratedCount = repository.migrateFeishuTasksToSingleQqBot()
                 val message = buildString {
                     append("导入成功")
+                    if (migratedTaskCount > 0) append("，已迁移 $migratedTaskCount 条 QQ 任务并取消旧调度")
                     if (skippedWebhookCount > 0) append("，已跳过 $skippedWebhookCount 条无效飞书 Webhook")
                     if (skippedQqBotCount > 0) append("，已跳过 $skippedQqBotCount 条无效 QQ 机器人")
                     if (skippedUnsupportedTaskCount > 0) append("，已跳过 $skippedUnsupportedTaskCount 条不支持的任务")
                     if (skippedTaskCount > 0) append("，已跳过 $skippedTaskCount 条目标或时间无效的任务")
                     if (duplicateTaskCount > 0) append("，已跳过 $duplicateTaskCount 条重复任务")
-                    if (migratedCount > 0) append("，已将 $migratedCount 条飞书任务迁移到 QQ")
                 }
                 SchedulerRecovery.recoverEnabledTasks(context, repository)
                 onComplete(true, message)

@@ -13,6 +13,8 @@ import com.autosend.data.models.FeishuWebhook
 import com.autosend.data.models.QqBot
 import com.autosend.data.models.ScheduledTask
 import com.autosend.data.models.TaskLog
+import com.autosend.data.models.PendingMessage
+import com.autosend.data.models.DeliveryGate
 
 @Database(
     entities = [
@@ -21,9 +23,11 @@ import com.autosend.data.models.TaskLog
         FeishuWebhook::class,
         QqBot::class,
         ScheduledTask::class,
-        TaskLog::class
+        TaskLog::class,
+        PendingMessage::class,
+        DeliveryGate::class
     ],
-    version = 13,
+    version = 14,
     exportSchema = false
 )
 @TypeConverters(Converters::class)
@@ -48,12 +52,43 @@ abstract class AppDatabase : RoomDatabase() {
                     MIGRATION_9_10,
                     MIGRATION_10_11,
                     MIGRATION_11_12,
-                    MIGRATION_12_13
+                    MIGRATION_12_13,
+                    MIGRATION_13_14
                 )
-                .fallbackToDestructiveMigration()
                 .build()
                 INSTANCE = instance
                 instance
+            }
+        }
+
+        private val MIGRATION_13_14 = object : Migration(13, 14) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                // 迁移事务内保留原配置与任务快照；不覆盖之前的备份。
+                listOf("scheduled_tasks", "bots", "chats", "qq_bots", "feishu_webhooks").forEach { table ->
+                    database.execSQL("CREATE TABLE IF NOT EXISTS schema_backup_v13_$table AS SELECT * FROM $table")
+                }
+                // 旧版 Telegram 通道整体停用；升级不能意外激活隐藏的历史任务。
+                database.execSQL("UPDATE scheduled_tasks SET isEnabled = 0 WHERE deliveryChannel = 'TELEGRAM'")
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS pending_messages (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        occurrenceKey TEXT NOT NULL, taskId INTEGER NOT NULL,
+                        botId INTEGER NOT NULL, chatId INTEGER NOT NULL,
+                        content TEXT NOT NULL, parseMode TEXT NOT NULL,
+                        occurrenceAt INTEGER NOT NULL, manual INTEGER NOT NULL,
+                        state TEXT NOT NULL, attempts INTEGER NOT NULL,
+                        nextAttemptAt INTEGER NOT NULL, leaseUntil INTEGER NOT NULL,
+                        lastError TEXT, messageId INTEGER, sentAt INTEGER
+                    )
+                """.trimIndent())
+                database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_pending_messages_occurrenceKey ON pending_messages(occurrenceKey)")
+                database.execSQL("ALTER TABLE task_logs ADD COLUMN pendingMessageId INTEGER")
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS delivery_gates (
+                        scope TEXT NOT NULL PRIMARY KEY, untilMillis INTEGER NOT NULL,
+                        failures INTEGER NOT NULL, lastError TEXT
+                    )
+                """.trimIndent())
             }
         }
 

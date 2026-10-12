@@ -14,7 +14,8 @@ data class TaskLog(
     val status: LogStatus,
     val errorMessage: String? = null,
     val timestamp: Long = System.currentTimeMillis(),
-    val isRead: Boolean = false
+    val isRead: Boolean = false,
+    val pendingMessageId: Long? = null
 )
 
 enum class LogStatus {

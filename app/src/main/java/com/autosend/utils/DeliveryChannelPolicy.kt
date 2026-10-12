@@ -3,8 +3,7 @@ package com.autosend.utils
 import com.autosend.data.models.DeliveryChannel
 
 /**
- * 控制当前版本允许在日常界面和调度器中使用的发送通道。
- * 飞书数据仍保留在数据库和配置导出中，但暂时不参与日常发送。
+ * 界面仅展示 Telegram；QQ 的配置、任务及发送能力继续保留。
  */
 object DeliveryChannelPolicy {
     private const val FEISHU_ENABLED = false
@@ -12,6 +11,8 @@ object DeliveryChannelPolicy {
     fun isEnabled(channel: DeliveryChannel): Boolean = when (channel) {
         DeliveryChannel.QQ -> true
         DeliveryChannel.FEISHU -> FEISHU_ENABLED
-        DeliveryChannel.TELEGRAM -> false
+        DeliveryChannel.TELEGRAM -> true
     }
+
+    fun isVisible(channel: DeliveryChannel): Boolean = channel == DeliveryChannel.TELEGRAM
 }

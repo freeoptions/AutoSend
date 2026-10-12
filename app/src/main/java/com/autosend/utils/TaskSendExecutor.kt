@@ -5,6 +5,7 @@ import com.autosend.data.models.LogStatus
 import com.autosend.data.models.ScheduledTask
 import com.autosend.data.models.TaskLog
 import com.autosend.data.models.TaskStatus
+import com.autosend.data.models.DeliveryChannel
 import com.autosend.data.repository.TelegramRepository
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.sync.Mutex
@@ -16,28 +17,44 @@ import javax.inject.Singleton
 @Singleton
 class TaskSendExecutor @Inject constructor(
     private val repository: TelegramRepository,
-    @ApplicationContext private val context: Context
+    @ApplicationContext private val context: Context,
+    private val telegramQueueProcessor: TelegramQueueProcessor
 ) {
     private val taskMutexes = ConcurrentHashMap<Long, Mutex>()
 
     suspend fun execute(
         taskId: Long,
         triggerAtMillis: Long = 0L,
-        forceExecution: Boolean = false
+        forceExecution: Boolean = false,
+        drainImmediately: Boolean = false
     ): TaskSendOutcome {
         return taskMutexes.getOrPut(taskId) { Mutex() }.withLock {
-            executeLocked(taskId, triggerAtMillis, forceExecution)
+            executeLocked(taskId, triggerAtMillis, forceExecution, drainImmediately)
         }
     }
 
     private suspend fun executeLocked(
         taskId: Long,
         triggerAtMillis: Long,
-        forceExecution: Boolean
+        forceExecution: Boolean,
+        drainImmediately: Boolean
     ): TaskSendOutcome {
         val task = repository.getTaskById(taskId) ?: return TaskSendOutcome.SKIPPED
         if (!DeliveryChannelPolicy.isEnabled(task.deliveryChannel)) {
             return TaskSendOutcome.SKIPPED
+        }
+        if (task.deliveryChannel == DeliveryChannel.TELEGRAM) {
+            if (!task.isEnabled) return TaskSendOutcome.SKIPPED
+            if (task.scheduledTime > System.currentTimeMillis()) {
+                WorkManagerHelper.scheduleTask(context, task)
+                return TaskSendOutcome.RESCHEDULED
+            }
+            repository.enqueueTelegramTask(task.id)
+            repository.getTaskById(task.id)?.takeIf { it.scheduledTime > System.currentTimeMillis() }
+                ?.let { WorkManagerHelper.scheduleTask(context, it) }
+            TelegramQueueScheduler.kick(context)
+            if (drainImmediately) telegramQueueProcessor.drain(budgetMillis = 45_000L)
+            return TaskSendOutcome.RETRY_SCHEDULED
         }
         if (forceExecution) {
             return if (task.isEnabled) {

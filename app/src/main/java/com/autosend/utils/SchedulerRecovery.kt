@@ -5,6 +5,7 @@ import com.autosend.data.models.LogStatus
 import com.autosend.data.models.ScheduledTask
 import com.autosend.data.models.TaskLog
 import com.autosend.data.models.TaskStatus
+import com.autosend.data.models.DeliveryChannel
 import com.autosend.data.repository.TelegramRepository
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.sync.Mutex
@@ -38,6 +39,7 @@ object SchedulerRecovery {
             }
 
         prefs.edit().putLong(KEY_LAST_CHECK_TIME, now).apply()
+        TelegramQueueScheduler.kick(context)
     }
 
     private suspend fun recoverTask(
@@ -49,6 +51,13 @@ object SchedulerRecovery {
     ) {
         val isRecurring = RecurringScheduleUtils.isRecurring(task)
         val scheduledTime = task.scheduledTime
+
+        if (task.deliveryChannel == DeliveryChannel.TELEGRAM && scheduledTime > 0L) {
+            if (scheduledTime <= now) repository.enqueueTelegramTask(task.id)
+            repository.getTaskById(task.id)?.takeIf { it.scheduledTime > now }
+                ?.let { WorkManagerHelper.scheduleTask(context, it) }
+            return
+        }
 
         if (scheduledTime <= 0L) {
             recoverInvalidTimeTask(context, repository, task)

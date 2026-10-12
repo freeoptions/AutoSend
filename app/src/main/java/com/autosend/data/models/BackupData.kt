@@ -51,5 +51,7 @@ data class TaskBackup(
     val cronExpression: String?,
     val lunarMonth: Int? = null,
     val lunarDay: Int? = null,
-    val lunarLeapMonth: Boolean = false
+    val lunarLeapMonth: Boolean = false,
+    // 仅用于明确要求改绑旧任务的转换文件，普通导出不包含此标记。
+    val migrateFromChannel: String? = null
 )

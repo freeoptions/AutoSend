@@ -9,6 +9,7 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.workDataOf
 import com.autosend.data.models.ScheduledTask
+import com.autosend.data.models.DeliveryChannel
 import com.autosend.service.TaskExecutionService
 import com.autosend.worker.TaskWorker
 import java.util.concurrent.TimeUnit
@@ -44,7 +45,8 @@ object WorkManagerHelper {
             context = context,
             taskId = task.id,
             triggerAtMillis = task.scheduledTime,
-            delayMillis = backupDelay
+            delayMillis = backupDelay,
+            requiresNetwork = task.deliveryChannel != DeliveryChannel.TELEGRAM
         )
         return exactScheduled
     }
@@ -90,10 +92,11 @@ object WorkManagerHelper {
         taskId: Long,
         triggerAtMillis: Long,
         delayMillis: Long = 0L,
-        forceExecution: Boolean = false
+        forceExecution: Boolean = false,
+        requiresNetwork: Boolean = true
     ) {
         val constraints = Constraints.Builder()
-            .setRequiredNetworkType(NetworkType.CONNECTED)
+            .setRequiredNetworkType(if (requiresNetwork) NetworkType.CONNECTED else NetworkType.NOT_REQUIRED)
             .build()
 
         val workRequest = OneTimeWorkRequestBuilder<TaskWorker>()

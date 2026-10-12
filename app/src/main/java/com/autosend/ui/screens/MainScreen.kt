@@ -171,7 +171,7 @@ private enum class TaskBoardFilter(val title: String) {
     DISABLED("禁用")
 }
 
-private fun targetKey(target: DeliveryTarget): String = "${target.channel.name}:${target.id}"
+private fun targetKey(target: DeliveryTarget): String = "${target.channel.name}:${target.botId ?: 0L}:${target.id}"
 
 private fun targetKey(task: ScheduledTask): String {
     val id = when (task.deliveryChannel) {
@@ -179,7 +179,7 @@ private fun targetKey(task: ScheduledTask): String {
         DeliveryChannel.FEISHU -> task.feishuWebhookId
         DeliveryChannel.TELEGRAM -> task.chatId
     }
-    return "${task.deliveryChannel.name}:${id ?: 0L}"
+    return "${task.deliveryChannel.name}:${task.botId ?: 0L}:${id ?: 0L}"
 }
 
 private fun formatLunarDate(date: LunarDate): String {
@@ -344,7 +344,7 @@ fun MainScreen(
                         )
                         Spacer(Modifier.height(8.dp))
                         Text(
-                            "先添加 QQ 群目标，再创建定时任务",
+                            "先添加 Telegram 机器人和目标，再创建定时任务",
                             style = MaterialTheme.typography.bodySmall,
                             color = AutoSendColors.muted
                         )
@@ -449,8 +449,8 @@ fun MainScreen(
                     viewModel.updateTask(
                         task.copy(
                             deliveryChannel = target.channel,
-                            botId = null,
-                            chatId = null,
+                            botId = target.botId,
+                            chatId = target.id.takeIf { target.channel == DeliveryChannel.TELEGRAM },
                             feishuWebhookId = target.id.takeIf { target.channel == DeliveryChannel.FEISHU },
                             qqBotId = target.id.takeIf { target.channel == DeliveryChannel.QQ },
                             content = content,
@@ -731,7 +731,7 @@ private fun TargetTaskPage(
     latestLogByTaskId: Map<Long, TaskLog?>,
     searchQuery: String,
     taskFilter: TaskBoardFilter,
-    taskSearchIndex: Map<Long, String>,
+    taskSearchIndex: Map<Long, PinyinUtils.SearchIndex>,
     onEdit: (ScheduledTask) -> Unit,
     onToggleEnabled: (ScheduledTask, Boolean) -> Unit,
     onDelete: (ScheduledTask) -> Unit,
@@ -803,7 +803,7 @@ private fun TaskList(
     latestLogByTaskId: Map<Long, TaskLog?>,
     searchQuery: String,
     taskFilter: TaskBoardFilter,
-    taskSearchIndex: Map<Long, String>,
+    taskSearchIndex: Map<Long, PinyinUtils.SearchIndex>,
     targetName: ((ScheduledTask) -> String)?,
     onEdit: (ScheduledTask) -> Unit,
     onToggleEnabled: (ScheduledTask, Boolean) -> Unit,
@@ -813,7 +813,7 @@ private fun TaskList(
 ) {
     val filteredTasks = remember(tasks, searchQuery, taskFilter, taskSearchIndex) {
         val searchMatchedTasks = tasks.filter { task ->
-            PinyinUtils.matches(taskSearchIndex[task.id].orEmpty(), searchQuery)
+            PinyinUtils.matches(taskSearchIndex[task.id], searchQuery)
         }
         applyTaskFilter(searchMatchedTasks, taskFilter)
     }

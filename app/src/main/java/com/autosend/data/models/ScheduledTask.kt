@@ -73,7 +73,8 @@ enum class MessageParseMode {
 data class DeliveryTarget(
     val channel: DeliveryChannel,
     val id: Long,
-    val name: String
+    val name: String,
+    val botId: Long? = null
 ) {
     val channelName: String
         get() = when (channel) {
@@ -85,6 +86,6 @@ data class DeliveryTarget(
     fun matches(task: ScheduledTask): Boolean = when (channel) {
         DeliveryChannel.QQ -> task.deliveryChannel == channel && task.qqBotId == id
         DeliveryChannel.FEISHU -> task.deliveryChannel == channel && task.feishuWebhookId == id
-        DeliveryChannel.TELEGRAM -> task.deliveryChannel == channel && task.chatId == id
+        DeliveryChannel.TELEGRAM -> task.deliveryChannel == channel && task.chatId == id && task.botId == botId
     }
 }

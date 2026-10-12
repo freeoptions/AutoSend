@@ -16,6 +16,7 @@ import com.autosend.utils.DeliveryChannelPolicy
 import com.autosend.utils.RecurringScheduleUtils
 import com.autosend.utils.SchedulerRecovery
 import com.autosend.utils.WorkManagerHelper
+import com.autosend.utils.TelegramQueueScheduler
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.SharingStarted
@@ -34,20 +35,23 @@ class MainViewModel @Inject constructor(
     init {
         viewModelScope.launch {
             ExitReasonTracker.recordLatestExitIfNeeded(context, repository)
-            repository.migrateFeishuTasksToSingleQqBot()
             SchedulerRecovery.recoverEnabledTasks(context, repository)
         }
     }
 
     val allTasks: StateFlow<List<ScheduledTask>> = repository.getAllTasks()
-        .map { tasks -> tasks.filter { DeliveryChannelPolicy.isEnabled(it.deliveryChannel) } }
+        .map { tasks -> tasks.filter { DeliveryChannelPolicy.isVisible(it.deliveryChannel) } }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val qqBots = repository.getAllQqBots()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    val deliveryTargets: StateFlow<List<DeliveryTarget>> = qqBots
-        .map { bots -> bots.map { DeliveryTarget(DeliveryChannel.QQ, it.id, it.name) } }
+    val deliveryTargets: StateFlow<List<DeliveryTarget>> = combine(repository.getAllBots(), repository.getAllChats()) { bots, chats ->
+        bots.flatMap { bot -> chats.map { chat ->
+            DeliveryTarget(DeliveryChannel.TELEGRAM, chat.id,
+                if (bots.size == 1) chat.name else "${bot.name} / ${chat.name}", bot.id)
+        } }
+    }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val logs: StateFlow<List<TaskLog>> = combine(repository.getAllLogs(), allTasks) { logs, tasks ->
@@ -76,6 +80,8 @@ class MainViewModel @Inject constructor(
         viewModelScope.launch {
             val draftTask = ScheduledTask(
                 deliveryChannel = target.channel,
+                botId = target.botId,
+                chatId = target.id.takeIf { target.channel == DeliveryChannel.TELEGRAM },
                 feishuWebhookId = target.id.takeIf { target.channel == DeliveryChannel.FEISHU },
                 qqBotId = target.id.takeIf { target.channel == DeliveryChannel.QQ },
                 content = content,
@@ -114,6 +120,7 @@ class MainViewModel @Inject constructor(
                 if (updatedTask.scheduledTime > now) {
                     WorkManagerHelper.scheduleTask(context, updatedTask)
                 }
+                TelegramQueueScheduler.kick(context)
             } else {
                 repository.updateTask(updatedTask)
                 WorkManagerHelper.cancelTask(context, updatedTask.id)
@@ -149,6 +156,11 @@ class MainViewModel @Inject constructor(
     fun sendTaskNow(task: ScheduledTask) {
         viewModelScope.launch {
             if (!DeliveryChannelPolicy.isEnabled(task.deliveryChannel)) return@launch
+            if (task.deliveryChannel == DeliveryChannel.TELEGRAM) {
+                repository.enqueueTelegramTask(task.id, manual = true)
+                TelegramQueueScheduler.kick(context)
+                return@launch
+            }
             val result = repository.sendScheduledMessage(task.id, isManual = true)
             val target = repository.describeTaskTarget(task)
             val latestTask = repository.getTaskById(task.id) ?: task
@@ -174,6 +186,11 @@ class MainViewModel @Inject constructor(
 
     fun retryFailedLog(log: TaskLog) {
         viewModelScope.launch {
+            if (log.pendingMessageId != null) {
+                repository.retryPendingMessage(log.pendingMessageId)
+                TelegramQueueScheduler.kick(context)
+                return@launch
+            }
             repository.getTaskById(log.taskId)?.let { sendTaskNow(it) }
         }
     }

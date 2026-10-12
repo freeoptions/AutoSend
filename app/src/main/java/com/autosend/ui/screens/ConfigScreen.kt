@@ -34,6 +34,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.FileOpen
 import androidx.compose.material.icons.filled.NotificationsActive
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -44,6 +45,8 @@ import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Tab
@@ -75,11 +78,16 @@ import androidx.documentfile.provider.DocumentFile
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.autosend.data.models.FeishuWebhook
 import com.autosend.data.models.QqBot
+import com.autosend.data.models.TelegramTargetConfig
+import com.autosend.data.models.PendingMessage
+import com.autosend.data.models.DeliveryGate
+import com.autosend.data.models.ScheduledTask
 import com.autosend.service.TaskExecutionService
 import com.autosend.ui.viewmodels.ConfigViewModel
 import com.autosend.ui.theme.AutoSendColors
 import com.autosend.utils.PermissionUtils
 import com.autosend.utils.RecoveryScheduler
+import com.autosend.utils.pendingQueuePresentation
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
@@ -99,8 +107,12 @@ fun ConfigScreen(
     val clipboard = LocalClipboardManager.current
     val scope = rememberCoroutineScope()
     val exportUri by viewModel.exportUri.collectAsState()
-    val qqBots by viewModel.qqBots.collectAsState()
-    val tabs = listOf("QQ 群", "设置")
+    val telegramTargets by viewModel.telegramTargets.collectAsState()
+    val pendingMessages by viewModel.pendingMessages.collectAsState()
+    val pendingCount by viewModel.pendingCount.collectAsState()
+    val deliveryGates by viewModel.deliveryGates.collectAsState()
+    val queueTasks by viewModel.queueTasks.collectAsState()
+    val tabs = listOf("Telegram", "待发队列", "设置")
     val pager = rememberPagerState(pageCount = { tabs.size })
     var editingWebhook by remember { mutableStateOf<FeishuWebhook?>(null) }
     var showAddWebhook by remember { mutableStateOf(false) }
@@ -110,6 +122,11 @@ fun ConfigScreen(
     var deletingQqBot by remember { mutableStateOf<QqBot?>(null) }
     var showImport by remember { mutableStateOf(false) }
     var importMessage by remember { mutableStateOf("") }
+    var editingTelegram by remember { mutableStateOf<TelegramTargetConfig?>(null) }
+    var showAddTelegram by remember { mutableStateOf(false) }
+    var deletingTelegram by remember { mutableStateOf<TelegramTargetConfig?>(null) }
+    var cancellingMessage by remember { mutableStateOf<PendingMessage?>(null) }
+    var editingPendingMessage by remember { mutableStateOf<PendingMessage?>(null) }
 
     val exportPicker = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocumentTree()
@@ -192,7 +209,7 @@ fun ConfigScreen(
         floatingActionButton = {
             if (pager.currentPage == 0) {
                 FloatingActionButton(
-                    onClick = { showAddQqBot = true },
+                    onClick = { showAddTelegram = true },
                     shape = RoundedCornerShape(18.dp),
                     containerColor = AutoSendColors.blue,
                     contentColor = Color.White
@@ -226,18 +243,30 @@ fun ConfigScreen(
                 modifier = Modifier.fillMaxSize()
             ) { page ->
                 when (page) {
-                    0 -> QqBotList(
-                        bots = qqBots,
-                        onEdit = { editingQqBot = it },
-                        onDelete = { deletingQqBot = it },
-                        onTest = { bot ->
-                            viewModel.testQqBot(bot) { _, message ->
+                    0 -> TelegramTargetList(
+                        targets = telegramTargets,
+                        onEdit = { editingTelegram = it },
+                        onDelete = { deletingTelegram = it },
+                        onTest = { target ->
+                            viewModel.testTelegramTarget(target) { _, message ->
                                 Toast.makeText(context, message, Toast.LENGTH_LONG).show()
                             }
                         },
                         modifier = Modifier.fillMaxSize()
                     )
-                    1 -> SettingsTab(
+                    1 -> PendingQueueTab(
+                        messages = pendingMessages,
+                        count = pendingCount,
+                        targets = telegramTargets,
+                        tasks = queueTasks,
+                        gates = deliveryGates,
+                        onRetry = viewModel::retryQueue,
+                        onRetryMessage = { viewModel.retryPendingMessage(it.id) },
+                        onPause = viewModel::pauseQueue,
+                        onCancel = { cancellingMessage = it },
+                        onEdit = { editingPendingMessage = it }
+                    )
+                    2 -> SettingsTab(
                         exportUri = exportUri,
                         onSelectDirectory = { exportPicker.launch(null) },
                         modifier = Modifier.fillMaxSize(),
@@ -246,6 +275,44 @@ fun ConfigScreen(
                 }
             }
         }
+    }
+
+    if (showAddTelegram || editingTelegram != null) {
+        TelegramTargetDialog(editingTelegram, onDismiss = {
+            showAddTelegram = false
+            editingTelegram = null
+        }) { botName, token, chatName, chatId ->
+            viewModel.saveTelegramTarget(editingTelegram, botName, token, chatName, chatId) { success, message ->
+                Toast.makeText(context, message, Toast.LENGTH_LONG).show()
+                if (success) {
+                    showAddTelegram = false
+                    editingTelegram = null
+                }
+            }
+        }
+    }
+    deletingTelegram?.let { target ->
+        ConfirmDeleteDialog("删除 Telegram 目标",
+            "确定删除“${target.chat.name}”及其关联定时任务吗？待发消息会保留，等待处理。", {
+                viewModel.deleteTelegramTarget(target)
+                deletingTelegram = null
+            }, { deletingTelegram = null })
+    }
+    cancellingMessage?.let { message ->
+        ConfirmDeleteDialog("取消待发消息", "确定取消这条消息吗？已经开始发送的消息可能已送达。", {
+            viewModel.cancelPendingMessage(message.id)
+            cancellingMessage = null
+        }, { cancellingMessage = null })
+    }
+    editingPendingMessage?.let { message ->
+        var content by remember(message.id) { mutableStateOf(message.content) }
+        AlertDialog(onDismissRequest = { editingPendingMessage = null }, title = { Text("编辑待发消息") },
+            text = { OutlinedTextField(content, { content = it }, modifier = Modifier.fillMaxWidth().height(180.dp)) },
+            confirmButton = { Button(onClick = {
+                viewModel.editPendingMessage(message.id, content)
+                editingPendingMessage = null
+            }, enabled = content.isNotBlank()) { Text("保存") } },
+            dismissButton = { TextButton(onClick = { editingPendingMessage = null }) { Text("取消") } })
     }
 
     deletingWebhook?.let { webhook ->
@@ -345,6 +412,154 @@ fun ConfigScreen(
                 importMessage = ""
             }
         )
+    }
+}
+
+@Composable
+private fun TelegramTargetList(
+    targets: List<TelegramTargetConfig>,
+    onEdit: (TelegramTargetConfig) -> Unit,
+    onDelete: (TelegramTargetConfig) -> Unit,
+    onTest: (TelegramTargetConfig) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    if (targets.isEmpty()) {
+        Box(modifier, contentAlignment = Alignment.Center) {
+            Text("点击右下角 ＋ 添加 Telegram 机器人和目标", color = AutoSendColors.muted)
+        }
+        return
+    }
+    LazyColumn(modifier, contentPadding = androidx.compose.foundation.layout.PaddingValues(20.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        items(targets, key = { "${it.bot.id}:${it.chat.id}" }) { target ->
+            Card(modifier = Modifier.fillMaxWidth().clickable { onEdit(target) }, colors = CardDefaults.cardColors(containerColor = Color.White),
+                shape = RoundedCornerShape(20.dp), border = BorderStroke(1.dp, AutoSendColors.line)) {
+                Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text(target.chat.name, style = MaterialTheme.typography.titleMedium)
+                        Text("${target.bot.name} · ${target.chat.chatId}", color = AutoSendColors.muted,
+                            style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    }
+                    TextButton(onClick = { onTest(target) }) { Text("测试") }
+                    IconButton(onClick = { onDelete(target) }) {
+                        Icon(Icons.Default.Delete, "删除目标", tint = AutoSendColors.error)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun TelegramTargetDialog(initial: TelegramTargetConfig?, onDismiss: () -> Unit,
+                                 onSave: (String, String, String, String) -> Unit) {
+    var botName by remember { mutableStateOf(initial?.bot?.name ?: "我的机器人") }
+    var token by remember { mutableStateOf(initial?.bot?.token.orEmpty()) }
+    var chatName by remember { mutableStateOf(initial?.chat?.name ?: "发送给自己") }
+    var chatId by remember { mutableStateOf(initial?.chat?.chatId.orEmpty()) }
+    AlertDialog(onDismissRequest = onDismiss,
+        title = { Text(if (initial == null) "添加 Telegram 目标" else "编辑 Telegram 目标") },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(botName, { botName = it }, label = { Text("机器人名称") }, singleLine = true)
+                OutlinedTextField(token, { token = it }, label = { Text("Bot Token") }, singleLine = true,
+                    visualTransformation = PasswordVisualTransformation())
+                OutlinedTextField(chatName, { chatName = it }, label = { Text("目标名称") }, singleLine = true)
+                OutlinedTextField(chatId, { chatId = it }, label = { Text("Chat ID 或 @频道名") }, singleLine = true)
+                Text("私聊请先向机器人发送 /start；群组请先添加机器人。私聊每 2 秒一条，群组每 5 秒一条。",
+                    style = MaterialTheme.typography.bodySmall, color = AutoSendColors.muted)
+            }
+        },
+        confirmButton = { Button(onClick = { onSave(botName, token, chatName, chatId) },
+            enabled = botName.isNotBlank() && token.isNotBlank() && chatName.isNotBlank() && chatId.isNotBlank()) { Text("保存") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } })
+}
+
+@Composable
+private fun PendingQueueTab(messages: List<PendingMessage>, count: Int, gates: List<DeliveryGate>,
+                            targets: List<TelegramTargetConfig>, tasks: List<ScheduledTask>,
+                            onRetry: () -> Unit, onRetryMessage: (PendingMessage) -> Unit,
+                            onPause: (Boolean) -> Unit, onCancel: (PendingMessage) -> Unit,
+                            onEdit: (PendingMessage) -> Unit) {
+    val paused = gates.any { it.scope == "pause" && it.untilMillis == Long.MAX_VALUE }
+    val targetNames = remember(targets) { targets.associate { (it.bot.id to it.chat.id) to it.chat.name } }
+    val taskStates = remember(tasks) { tasks.associate { it.id to it.isEnabled } }
+    var now by remember { mutableStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(1_000L)
+            now = System.currentTimeMillis()
+        }
+    }
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = androidx.compose.foundation.layout.PaddingValues(20.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text(if (count == 0) "没有待发消息" else "$count 条待发消息",
+                        style = MaterialTheme.typography.titleMedium, color = AutoSendColors.ink)
+                    if (count > 0) {
+                        TextButton(onClick = { onPause(!paused) }) { Text(if (paused) "恢复发送" else "暂停发送") }
+                    }
+                }
+                if (count > 0) {
+                    Text(if (paused) "自动发送已暂停" else "未成功发送的消息会保留在这里",
+                        style = MaterialTheme.typography.bodySmall, color = AutoSendColors.muted)
+                }
+                if (count > 1) TextButton(onClick = onRetry) { Text("全部重试") }
+                if (count > messages.size) Text("显示最早的 ${messages.size} 条，处理后继续显示后续消息",
+                    style = MaterialTheme.typography.bodySmall, color = AutoSendColors.muted)
+            }
+        }
+        items(messages, key = { it.id }) { message ->
+            val presentation = pendingQueuePresentation(message, gates, taskStates[message.taskId], now)
+            var menuExpanded by remember(message.id) { mutableStateOf(false) }
+            Card(colors = CardDefaults.cardColors(containerColor = Color.White), shape = RoundedCornerShape(20.dp),
+                border = BorderStroke(1.dp, AutoSendColors.line)) {
+                Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text(presentation.status, style = MaterialTheme.typography.labelLarge,
+                            color = if (presentation.error != null || presentation.status == "需要处理") AutoSendColors.warning else AutoSendColors.blue)
+                        Box {
+                            IconButton(onClick = { menuExpanded = true }, modifier = Modifier.size(40.dp)) {
+                                Icon(Icons.Default.MoreVert, contentDescription = "消息操作", tint = AutoSendColors.muted)
+                            }
+                            DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
+                                if (presentation.canEdit) DropdownMenuItem(text = { Text("编辑消息") }, onClick = {
+                                    menuExpanded = false
+                                    onEdit(message)
+                                })
+                                DropdownMenuItem(text = { Text("取消这条消息", color = AutoSendColors.error) }, onClick = {
+                                    menuExpanded = false
+                                    onCancel(message)
+                                })
+                            }
+                        }
+                    }
+                    Text(message.content, style = MaterialTheme.typography.bodyLarge,
+                        color = AutoSendColors.ink, maxLines = 4, overflow = TextOverflow.Ellipsis)
+                    Text("发送到 ${targetNames[message.botId to message.chatId] ?: "已删除的目标"}",
+                        style = MaterialTheme.typography.bodySmall, color = AutoSendColors.muted)
+                    Text("原定 ${formatDiagnosticTime(message.occurrenceAt)} · 发送尝试 ${message.attempts} 次",
+                        style = MaterialTheme.typography.bodySmall, color = AutoSendColors.muted)
+                    presentation.error?.let { error ->
+                        Text(error, style = MaterialTheme.typography.bodySmall, color = AutoSendColors.warning,
+                            modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp))
+                                .background(AutoSendColors.warning.copy(alpha = 0.08f)).padding(10.dp))
+                    }
+                    val nextCheck = presentation.nextCheckAt
+                    Text(if (nextCheck != null) {
+                        "${if (presentation.connectionProbe) "下次连接检测" else "最早重试时间"} ${formatDiagnosticTime(nextCheck)}"
+                    } else presentation.explanation.orEmpty(),
+                        style = MaterialTheme.typography.bodySmall, color = AutoSendColors.muted)
+                    if (presentation.canRetry) Button(onClick = { onRetryMessage(message) }) {
+                        Text(if (message.attempts > 0) "立即重试" else "立即发送")
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -692,6 +907,8 @@ private fun ImportDialog(
                         .height(160.dp),
                     placeholder = { Text("粘贴导出的 JSON") }
                 )
+                Text("Telegram 任务可引用本机已有目标；只有一个机器人和目标时，可以省略名称。",
+                    style = MaterialTheme.typography.bodySmall, color = AutoSendColors.muted)
                 if (message.isNotBlank()) {
                     Text(message, color = AutoSendColors.error)
                 }
@@ -738,10 +955,10 @@ private fun SettingsTab(
             elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
         ) {
             Column(Modifier.padding(16.dp)) {
-                Text("飞书通道已停用", style = MaterialTheme.typography.titleMedium)
+                Text("发送与补发", style = MaterialTheme.typography.titleMedium)
                 Spacer(Modifier.height(6.dp))
                 Text(
-                    "原有飞书配置和历史任务仍会保留，但不会显示在日常任务列表中，也不会被调度发送。",
+                    "私聊每 2 秒一条，群组每 5 秒一条。未成功的消息保留在待发队列，连接异常时自动降低重试频率。",
                     style = MaterialTheme.typography.bodySmall,
                     color = AutoSendColors.muted
                 )

@@ -94,7 +94,8 @@ class TaskExecutionService : Service() {
             runCatching {
                 taskSendExecutor.execute(
                     taskId = taskId,
-                    triggerAtMillis = triggerAtMillis
+                    triggerAtMillis = triggerAtMillis,
+                    drainImmediately = true
                 )
             }.onFailure { throwable ->
                 Log.w(TAG, "定时任务执行协程异常。", throwable)

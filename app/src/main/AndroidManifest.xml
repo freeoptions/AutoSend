@@ -3,6 +3,7 @@
     xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <!-- AutoSend 使用适用范围更广、可由用户撤销的精确闹钟特殊权限。
          USE_EXACT_ALARM 仅适用于符合商店政策的系统闹钟/日历类应用，不能与此权限混用。 -->
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
