@@ -22,10 +22,15 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
+
+data class TaskBoardUiState(
+    val isLoading: Boolean = true,
+    val tasks: List<ScheduledTask> = emptyList(),
+    val targets: List<DeliveryTarget> = emptyList()
+)
 
 @HiltViewModel
 class MainViewModel @Inject constructor(
@@ -39,23 +44,26 @@ class MainViewModel @Inject constructor(
         }
     }
 
-    val allTasks: StateFlow<List<ScheduledTask>> = repository.getAllTasks()
-        .map { tasks -> tasks.filter { DeliveryChannelPolicy.isVisible(it.deliveryChannel) } }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
-
     val qqBots = repository.getAllQqBots()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    val deliveryTargets: StateFlow<List<DeliveryTarget>> = combine(repository.getAllBots(), repository.getAllChats()) { bots, chats ->
-        bots.flatMap { bot -> chats.map { chat ->
-            DeliveryTarget(DeliveryChannel.TELEGRAM, chat.id,
-                if (bots.size == 1) chat.name else "${bot.name} / ${chat.name}", bot.id)
-        } }
+    // 三项查询均首次返回后才结束加载，空列表也作为已加载结果处理。
+    val taskBoardState: StateFlow<TaskBoardUiState> = combine(
+        repository.getAllTasks(), repository.getAllBots(), repository.getAllChats()
+    ) { tasks, bots, chats ->
+        TaskBoardUiState(
+            isLoading = false,
+            tasks = tasks.filter { DeliveryChannelPolicy.isVisible(it.deliveryChannel) },
+            targets = bots.flatMap { bot -> chats.map { chat ->
+                DeliveryTarget(DeliveryChannel.TELEGRAM, chat.id,
+                    if (bots.size == 1) chat.name else "${bot.name} / ${chat.name}", bot.id)
+            } }
+        )
     }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), TaskBoardUiState())
 
-    val logs: StateFlow<List<TaskLog>> = combine(repository.getAllLogs(), allTasks) { logs, tasks ->
-        val visibleTaskIds = tasks.mapTo(HashSet<Long>()) { it.id }
+    val logs: StateFlow<List<TaskLog>> = combine(repository.getAllLogs(), taskBoardState) { logs, board ->
+        val visibleTaskIds = board.tasks.mapTo(HashSet<Long>()) { it.id }
         logs.filter { it.taskId in visibleTaskIds }
     }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())

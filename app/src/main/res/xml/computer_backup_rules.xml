@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<full-backup-content>
+    <!-- Android Keystore keys cannot be restored alongside these encrypted preferences. -->
+    <exclude domain="sharedpref" path="autosend_computer.xml" />
+    <exclude domain="sharedpref" path="autosend_computer_diagnostics.xml" />
+</full-backup-content>

@@ -43,6 +43,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
@@ -154,16 +155,6 @@ private val LUNAR_FESTIVALS = mapOf(
     (12 to 24) to "南方小年"
 )
 
-private val LUNAR_MONTH_NAMES = listOf(
-    "", "正", "二", "三", "四", "五", "六", "七", "八", "九", "十", "冬", "腊"
-)
-
-private val LUNAR_DAY_NAMES = listOf(
-    "", "初一", "初二", "初三", "初四", "初五", "初六", "初七", "初八", "初九", "初十",
-    "十一", "十二", "十三", "十四", "十五", "十六", "十七", "十八", "十九", "二十",
-    "廿一", "廿二", "廿三", "廿四", "廿五", "廿六", "廿七", "廿八", "廿九", "三十"
-)
-
 private enum class TaskBoardFilter(val title: String) {
     ALL("全部任务"),
     THIS_MONTH("本月触发"),
@@ -183,10 +174,7 @@ private fun targetKey(task: ScheduledTask): String {
 }
 
 private fun formatLunarDate(date: LunarDate): String {
-    val monthName = LUNAR_MONTH_NAMES.getOrNull(date.month).orEmpty()
-    val dayName = LUNAR_DAY_NAMES.getOrNull(date.day).orEmpty()
-    val leapPrefix = if (date.isLeapMonth) "闰" else ""
-    return "${leapPrefix}${monthName}月$dayName"
+    return LunarCalendarUtils.formatDate(date)
 }
 
 private fun findTodayFestival(calendar: Calendar, lunarDate: LunarDate): String? {
@@ -201,8 +189,9 @@ fun MainScreen(
     onNavigateToConfig: () -> Unit,
     onNavigateToLogs: () -> Unit
 ) {
-    val allTasks by viewModel.allTasks.collectAsState()
-    val targets by viewModel.deliveryTargets.collectAsState()
+    val taskBoard by viewModel.taskBoardState.collectAsState()
+    val allTasks = taskBoard.tasks
+    val targets = taskBoard.targets
     val logs by viewModel.logs.collectAsState()
     val scope = rememberCoroutineScope()
     val latestLogByTaskId = remember(logs) {
@@ -318,14 +307,16 @@ fun MainScreen(
             )
         },
         floatingActionButton = {
-            FloatingActionButton(
-                onClick = { showCreateDialog = true },
-                modifier = Modifier.padding(end = 16.dp, bottom = 8.dp),
-                shape = CircleShape,
-                containerColor = AutoSendColors.blue,
-                contentColor = Color.White
-            ) {
-                Icon(Icons.Default.Add, contentDescription = DESC_ADD_TASK)
+            if (!taskBoard.isLoading) {
+                FloatingActionButton(
+                    onClick = { showCreateDialog = true },
+                    modifier = Modifier.padding(end = 16.dp, bottom = 8.dp),
+                    shape = CircleShape,
+                    containerColor = AutoSendColors.blue,
+                    contentColor = Color.White
+                ) {
+                    Icon(Icons.Default.Add, contentDescription = DESC_ADD_TASK)
+                }
             }
         }
     ) { padding ->
@@ -334,7 +325,20 @@ fun MainScreen(
                 .fillMaxSize()
                 .padding(padding)
         ) {
-            if (targets.isEmpty()) {
+            if (taskBoard.isLoading) {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(24.dp),
+                            color = AutoSendColors.blue,
+                            strokeWidth = 2.dp
+                        )
+                        Spacer(Modifier.height(12.dp))
+                        Text("正在加载…", style = MaterialTheme.typography.bodySmall,
+                            color = AutoSendColors.muted)
+                    }
+                }
+            } else if (targets.isEmpty()) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Text(

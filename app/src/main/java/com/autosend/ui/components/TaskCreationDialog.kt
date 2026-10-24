@@ -27,6 +27,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -56,6 +57,7 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -87,13 +89,11 @@ private const val LABEL_CRON_PREVIEW = "触发时间预览"
 private const val LABEL_CRON_HINT = "支持 L：放在“日”位表示当月最后一天，例如 0 0 20 L * *"
 private const val LABEL_MESSAGE_TIME = "发送时间（yyyy-MM-dd HH:mm）"
 private const val LABEL_MESSAGE_CONTENT = "消息内容"
-private const val LABEL_LUNAR_MONTH = "月份（1-12）"
-private const val LABEL_LUNAR_DAY = "日期（1-30）"
 private const val LABEL_LUNAR_TIME = "发送时间（HH:mm）"
 private const val LABEL_LUNAR_TIME_HINT = "默认 00:00，可按需修改"
 private const val LABEL_LUNAR_LEAP = "闰月"
 private const val LABEL_LUNAR_LEAP_HINT = "开启后仅在闰月触发，普通生日请保持关闭"
-private const val LABEL_LUNAR_HINT = "设置阴历月日后，每年当天 00:00 自动发送；如果该年没有对应的闰月日期，将顺延到下一次可用日期。"
+private const val LABEL_LUNAR_HINT = "每年阴历当天按所选时间发送；当年没有对应日期（含闰月或三十）时，等待下一次有效日期。"
 private const val ACTION_CANCEL = "取消"
 private const val ACTION_CREATE = "立即创建"
 private const val ACTION_SAVE = "保存修改"
@@ -154,7 +154,9 @@ fun TaskCreationDialog(
         mutableStateOf(editingTask?.cronExpression ?: "0 0 * * * *")
     }
     val cronInputFocusRequester = remember { FocusRequester() }
-    val keyboardController = LocalSoftwareKeyboardController.current
+    LaunchedEffect(scheduleMode) {
+        dialogScrollState.scrollTo(0)
+    }
     var selectedPartIndex by remember(editingTask) { mutableIntStateOf(1) }
     val initialTime = editingTask?.let { Date(it.scheduledTime) }
         ?: Date(System.currentTimeMillis() + 600000)
@@ -167,15 +169,16 @@ fun TaskCreationDialog(
             }
         } ?: LunarCalendarUtils.getLunarDate(initialTime.time)
     }
-    var lunarMonthString by remember(editingTask) {
-        mutableStateOf(editingTask?.lunarMonth?.toString() ?: defaultLunarDate.month.toString())
+    var lunarMonth by remember(editingTask) {
+        mutableIntStateOf(defaultLunarDate.month)
     }
-    var lunarDayString by remember(editingTask) {
-        mutableStateOf(editingTask?.lunarDay?.toString() ?: defaultLunarDate.day.toString())
+    var lunarDay by remember(editingTask) {
+        mutableIntStateOf(defaultLunarDate.day)
     }
     var lunarLeapMonth by remember(editingTask) {
-        mutableStateOf(editingTask?.lunarLeapMonth ?: false)
+        mutableStateOf(defaultLunarDate.isLeapMonth)
     }
+    var showLunarPicker by remember(editingTask) { mutableStateOf(false) }
     var lunarTimeString by remember(editingTask) {
         mutableStateOf(
             editingTask?.let {
@@ -201,20 +204,16 @@ fun TaskCreationDialog(
         nextExecutionTimes.isEmpty() -> "表达式无效或未来两年内没有触发时间，请检查填写内容"
         else -> null
     }
-    val lunarMonth = lunarMonthString.toIntOrNull()
-    val lunarDay = lunarDayString.toIntOrNull()
     val parsedLunarTime = remember(lunarTimeString) { parseLunarTime(lunarTimeString) }
     val lunarNextExecutionTimes = remember(
-        lunarMonthString,
-        lunarDayString,
+        lunarMonth,
+        lunarDay,
         lunarLeapMonth,
         lunarTimeString,
         scheduleMode
     ) {
         if (
             scheduleMode == ScheduleMode.LUNAR &&
-            lunarMonth != null &&
-            lunarDay != null &&
             parsedLunarTime != null
         ) {
             val calendar = java.util.Calendar.getInstance().apply {
@@ -234,7 +233,7 @@ fun TaskCreationDialog(
     }
     val lunarValidationMessage = when {
         scheduleMode != ScheduleMode.LUNAR -> null
-        !LunarCalendarUtils.isValidDate(lunarMonth, lunarDay) -> "请输入有效的阴历月份（1-12）和日期（1-30）"
+        !LunarCalendarUtils.isValidDate(lunarMonth, lunarDay) -> "请选择有效的阴历日期"
         parsedLunarTime == null -> "请输入正确的时间格式（HH:mm）"
         lunarNextExecutionTimes.isEmpty() -> "未来几年内找不到对应日期，请检查月份、日期或闰月设置"
         else -> null
@@ -252,6 +251,17 @@ fun TaskCreationDialog(
             decorFitsSystemWindows = false
         )
     ) {
+        // 必须在 Dialog 内获取，才能控制当前弹窗的焦点和输入法。
+        val focusManager = LocalFocusManager.current
+        val keyboardController = LocalSoftwareKeyboardController.current
+        val selectScheduleMode: (ScheduleMode) -> Unit = { mode ->
+            if (mode != scheduleMode) {
+                // 先结束输入，再替换表单，避免旧输入框继续拉动滚动位置。
+                focusManager.clearFocus(force = true)
+                keyboardController?.hide()
+                scheduleMode = mode
+            }
+        }
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -349,12 +359,12 @@ fun TaskCreationDialog(
                                     verticalAlignment = Alignment.CenterVertically,
                                     modifier = Modifier
                                         .weight(1f)
-                                        .clickable { scheduleMode = mode }
+                                        .clickable { selectScheduleMode(mode) }
                                         .padding(vertical = 8.dp, horizontal = 2.dp)
                                 ) {
                                     RadioButton(
                                         selected = scheduleMode == mode,
-                                        onClick = { scheduleMode = mode }
+                                        onClick = { selectScheduleMode(mode) }
                                     )
                                     Text(label, fontSize = 12.sp, maxLines = 1)
                                 }
@@ -535,28 +545,32 @@ fun TaskCreationDialog(
                             fontWeight = FontWeight.Bold
                         )
                         Spacer(Modifier.height(8.dp))
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        Card(
+                            onClick = {
+                                keyboardController?.hide()
+                                showLunarPicker = true
+                            },
+                            colors = CardDefaults.cardColors(containerColor = AutoSendColors.blueTint.copy(alpha = 0.55f)),
+                            border = BorderStroke(1.dp, AutoSendColors.line),
+                            modifier = Modifier.fillMaxWidth()
                         ) {
-                            OutlinedTextField(
-                                value = lunarMonthString,
-                                onValueChange = { lunarMonthString = it.filter { char -> char.isDigit() }.take(2) },
-                                label = { Text(LABEL_LUNAR_MONTH) },
-                                modifier = Modifier.weight(1f),
-                                singleLine = true,
-                                isError = lunarMonth == null || lunarMonth !in 1..12,
-                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
-                            )
-                            OutlinedTextField(
-                                value = lunarDayString,
-                                onValueChange = { lunarDayString = it.filter { char -> char.isDigit() }.take(2) },
-                                label = { Text(LABEL_LUNAR_DAY) },
-                                modifier = Modifier.weight(1f),
-                                singleLine = true,
-                                isError = lunarDay == null || lunarDay !in 1..30,
-                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
-                            )
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(14.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(Modifier.weight(1f)) {
+                                    Text("阴历生日", style = androidx.compose.material3.MaterialTheme.typography.labelMedium,
+                                        color = AutoSendColors.muted)
+                                    Text(
+                                        LunarCalendarUtils.formatDate(com.autosend.utils.LunarDate(lunarMonth, lunarDay, lunarLeapMonth)),
+                                        style = androidx.compose.material3.MaterialTheme.typography.titleMedium,
+                                        fontWeight = FontWeight.Bold, color = AutoSendColors.ink
+                                    )
+                                }
+                                Text("选择日期", style = androidx.compose.material3.MaterialTheme.typography.labelMedium,
+                                    color = AutoSendColors.blue, modifier = Modifier.padding(end = 8.dp))
+                                Icon(Icons.Default.CalendarMonth, contentDescription = null, tint = AutoSendColors.blue)
+                            }
                         }
                         Spacer(Modifier.height(8.dp))
                         Row(
@@ -683,6 +697,18 @@ fun TaskCreationDialog(
                 }
             }
         }
+    }
+    if (showLunarPicker) {
+        LunarDatePickerDialog(
+            initialDate = com.autosend.utils.LunarDate(lunarMonth, lunarDay, lunarLeapMonth),
+            onDismiss = { showLunarPicker = false },
+            onConfirm = { date ->
+                lunarMonth = date.month
+                lunarDay = date.day
+                lunarLeapMonth = date.isLeapMonth
+                showLunarPicker = false
+            }
+        )
     }
 }
 

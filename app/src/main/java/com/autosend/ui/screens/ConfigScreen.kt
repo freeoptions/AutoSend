@@ -969,6 +969,22 @@ private fun SettingsTab(
             modifier = Modifier.fillMaxWidth(),
             colors = CardDefaults.cardColors(containerColor = Color.White),
             shape = RoundedCornerShape(20.dp),
+            border = BorderStroke(1.dp, AutoSendColors.line)
+        ) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("发送到电脑", style = MaterialTheme.typography.titleMedium)
+                Text("配置一次后，从系统分享菜单直接发送单个图片或文件到电脑。",
+                    style = MaterialTheme.typography.bodySmall, color = AutoSendColors.muted)
+                Button(onClick = {
+                    context.startActivity(android.content.Intent(context,
+                        com.autosend.computer.ComputerSettingsActivity::class.java))
+                }) { Text("电脑连接设置") }
+            }
+        }
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = Color.White),
+            shape = RoundedCornerShape(20.dp),
             border = BorderStroke(1.dp, AutoSendColors.line),
             elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
         ) {

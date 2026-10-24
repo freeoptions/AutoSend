@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.autosend.ui.screens.ConfigScreen
@@ -142,7 +143,7 @@ fun PermissionCheck() {
 
 @Composable
 fun AutoSendApp() {
-    var currentScreen by remember { mutableStateOf(Screen.Main) }
+    var currentScreen by rememberSaveable { mutableStateOf(Screen.Main) }
     val mainViewModel: MainViewModel = viewModel()
 
     // Handle system back gesture
