@@ -206,6 +206,7 @@ class TaskExecutionService : Service() {
             .setContentText("任务完成后会立即移除本通知。")
             .setContentIntent(pendingIntent)
             .setOngoing(true)
+            .setSilent(true)
             .setShowWhen(false)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .build()

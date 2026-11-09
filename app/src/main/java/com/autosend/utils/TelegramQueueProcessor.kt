@@ -108,36 +108,45 @@ class TelegramQueueProcessor @Inject constructor(
             timestamp = now, pendingMessageId = message.id))
     }
 
-    private suspend fun handleFailure(message: PendingMessage, failure: TelegramDeliveryResult.Failure, attempted: Boolean) = database.withTransaction {
-        val now = System.currentTimeMillis()
-        val current = dao.getPendingMessage(message.id) ?: return@withTransaction
-        if (current.state == PendingMessage.CANCELLED ||
-            (attempted && current.state == PendingMessage.BLOCKED)) return@withTransaction
-        val error = if (failure.uncertain) "结果未确认：${failure.reason}" else failure.reason
-        var updated = current.copy(state = PendingMessage.WAITING, leaseUntil = 0,
-            lastError = error)
-        if (failure.migratedChatId != null) {
-            dao.getChatById(message.chatId)?.let { dao.updateChat(it.copy(chatId = failure.migratedChatId.toString())) }
-            updated = updated.copy(nextAttemptAt = now + 5_000L)
-        } else when (failure.kind) {
-            DeliveryFailureKind.NETWORK -> {
-                val gate = dao.getDeliveryGate("network") ?: DeliveryGate("network")
-                val count = (gate.failures + 1).coerceAtMost(100)
-                dao.putDeliveryGate(DeliveryGate("network", now + TelegramRetryPolicy.networkDelayMillis(count), count, error))
+    private suspend fun handleFailure(message: PendingMessage, failure: TelegramDeliveryResult.Failure, attempted: Boolean) {
+        val alert = database.withTransaction {
+            val now = System.currentTimeMillis()
+            val current = dao.getPendingMessage(message.id) ?: return@withTransaction false
+            if (current.state == PendingMessage.CANCELLED ||
+                (attempted && current.state == PendingMessage.BLOCKED)) return@withTransaction false
+            var shouldAlert = attempted && current.attempts == 3 &&
+                failure.kind != DeliveryFailureKind.NETWORK && failure.migratedChatId == null
+            val error = if (failure.uncertain) "结果未确认：${failure.reason}" else failure.reason
+            var updated = current.copy(state = PendingMessage.WAITING, leaseUntil = 0,
+                lastError = error)
+            if (failure.migratedChatId != null) {
+                dao.getChatById(message.chatId)?.let { dao.updateChat(it.copy(chatId = failure.migratedChatId.toString())) }
+                updated = updated.copy(nextAttemptAt = now + 5_000L)
+            } else when (failure.kind) {
+                DeliveryFailureKind.NETWORK -> {
+                    val gate = dao.getDeliveryGate("network") ?: DeliveryGate("network")
+                    val count = (gate.failures + 1).coerceAtMost(100)
+                    dao.putDeliveryGate(DeliveryGate("network", now + TelegramRetryPolicy.networkDelayMillis(count), count, error))
+                    // 共享线路第三次实际发送失败时提醒；后续探测不发送消息，也不重复通知。
+                    shouldAlert = attempted && count == 3
+                }
+                DeliveryFailureKind.RATE_LIMIT -> dao.putDeliveryGate(DeliveryGate("bot:${message.botId}",
+                    now + failure.retryAfterSeconds.coerceIn(1, 2_592_000) * 1_000L + 1_000L, lastError = error))
+                DeliveryFailureKind.BOT -> dao.putDeliveryGate(DeliveryGate("bot:${message.botId}", Long.MAX_VALUE, lastError = error))
+                DeliveryFailureKind.TARGET -> dao.putDeliveryGate(DeliveryGate("chat:${message.botId}:${message.chatId}", Long.MAX_VALUE, lastError = error))
+                DeliveryFailureKind.MESSAGE -> updated = updated.copy(state = PendingMessage.BLOCKED)
             }
-            DeliveryFailureKind.RATE_LIMIT -> dao.putDeliveryGate(DeliveryGate("bot:${message.botId}",
-                now + failure.retryAfterSeconds.coerceIn(1, 2_592_000) * 1_000L + 1_000L, lastError = error))
-            DeliveryFailureKind.BOT -> dao.putDeliveryGate(DeliveryGate("bot:${message.botId}", Long.MAX_VALUE, lastError = error))
-            DeliveryFailureKind.TARGET -> dao.putDeliveryGate(DeliveryGate("chat:${message.botId}:${message.chatId}", Long.MAX_VALUE, lastError = error))
-            DeliveryFailureKind.MESSAGE -> updated = updated.copy(state = PendingMessage.BLOCKED)
+            dao.updatePendingMessage(updated)
+            // 一次发送只保留一条展示记录；重试更新原因和时间，成功后原地变为成功。
+            if (attempted || current.lastError != error) {
+                dao.savePendingMessageLog(TaskLog(taskId = message.taskId, taskContent = message.content,
+                    botName = "Telegram", chatName = dao.getChatById(message.chatId)?.name ?: "未知目标",
+                    status = LogStatus.FAILED, errorMessage = "$error；消息保留在待发队列",
+                    timestamp = now, pendingMessageId = message.id))
+            }
+            shouldAlert
         }
-        dao.updatePendingMessage(updated)
-        // 一次发送只保留一条展示记录；重试更新原因和时间，成功后原地变为成功。
-        if (attempted || current.lastError != error) {
-            dao.savePendingMessageLog(TaskLog(taskId = message.taskId, taskContent = message.content,
-                botName = "Telegram", chatName = dao.getChatById(message.chatId)?.name ?: "未知目标",
-                status = LogStatus.FAILED, errorMessage = "$error；消息保留在待发队列",
-                timestamp = now, pendingMessageId = message.id))
-        }
+        // 先提交队列和冷却状态，再通知用户。
+        if (alert) TelegramDeliveryAlerts.failed(context)
     }
 }
